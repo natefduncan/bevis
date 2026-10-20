@@ -175,7 +175,16 @@ A cell is addressed by `(evidence id, version, key values, column)`:
 cell(q-seg-delta, "Mid-market", 2025, revenue)
 ```
 
-Key values are given in the declared key-column order.
+Key values are given in the declared key-column order. A record with an
+empty key (single row) is addressed with no key values:
+`cell(q-total, revenue)`.
+
+**Version comes from the pin.** Expressions do not name a version. A
+cell reference resolves to the version that the enclosing claim (or
+chart) pins for that evidence id. A claim may pin **at most one version
+per evidence id**; pinning two versions of the same id is an error. A
+comparison across versions is made by submitting the data under
+separate slugs, or as one record that holds both.
 
 ### 3.6 Charts
 
@@ -186,13 +195,23 @@ A chart block is either:
   external URLs. Each mark carries its row key, so clicking a mark opens
   that row in the evidence panel. The validator enforces "chart data =
   cited evidence". Specs have a size and complexity cap.
-  - **Transforms are strict.** Only `filter`, `sort`, and `limit` are
-    allowed. Anything that creates or combines values (`aggregate`,
-    `joinaggregate`, `window`, `calculate`, `bin`, `lookup`, `pivot`,
-    and similar) is a validation error, so each mark corresponds to one
-    evidence row. A derived series is computed in SQL and submitted as
-    its own evidence record.
-  - Stacking, scales, colors, and axes are encodings and stay allowed.
+  - **Transforms are strict.** The only allowed entry in `transform` is
+    `filter`, so each mark corresponds to one evidence row. Every other
+    Vega-Lite transform is a validation error. That includes transforms
+    that create or combine values (`aggregate`, `joinaggregate`,
+    `window`, `calculate`, `bin`, `timeUnit`, `lookup`, `pivot`, `fold`,
+    `impute`, `density`, `regression`, `loess`, `quantile`) and `sample`,
+    which drops rows unpredictably.
+  - **Encodings are checked too.** An encoding channel may not set
+    `aggregate`, `bin`, `timeUnit`, or `impute`, because each of these
+    merges or creates rows. An encoding `sort` is allowed, since it only
+    orders marks.
+  - **Top-N and derived series are done in SQL.** Vega-Lite has no limit
+    transform. A chart of the top N rows cites an evidence record that
+    holds those N rows (marked `partial` if it is a slice of a larger
+    result). A derived series is computed in SQL and submitted as its
+    own evidence record.
+  - Stacking, scales, colors, and axes stay allowed.
   - The host attaches each row's key columns to its mark, so authors do
     not wire this up.
   - Layered charts are allowed, each layer bound to one evidence record.
@@ -214,10 +233,37 @@ against them.
 expr     := term (("+" | "-") term)*
 term     := factor (("*" | "/") factor)*
 factor   := number | cell | call | "(" expr ")" | "-" factor
-cell     := "cell" "(" evidence_id "," key_value ("," key_value)* "," column ")"
+cell     := "cell" "(" evidence_id ("," key_value)* "," column ")"
 call     := name "(" [expr ("," expr)*] ")"
 name     := "pct_change" | "share" | "sum" | "min" | "max" | "rank"
+
+evidence_id := [a-z][a-z0-9-]{2,63}          (the slug rule, §3.4)
+column      := identifier | string
+identifier  := [A-Za-z_][A-Za-z0-9_]*
+key_value   := number | "-" number | string | "true" | "false" | "null"
+number      := [0-9]+ ("." [0-9]+)?           (no exponent, no separators)
+string      := '"' ( [^"\\] | '\"' | '\\' )* '"'
 ```
+
+Lexical and parsing rules:
+
+- Whitespace between tokens is ignored. Keywords and function names are
+  case-sensitive.
+- The first argument of `cell` is always read as a slug, so hyphens in
+  it are not minus signs.
+- The **last** argument of `cell` is the column and the arguments
+  between the slug and the column are key values. Parsing therefore needs
+  no knowledge of the evidence. The host then checks that the number of
+  key values equals the record's key arity; a mismatch is an error.
+- Key values are coerced to the key column's declared type: a number for
+  `integer` or `decimal` (exact), a string for `string`, an ISO 8601
+  string (`"2025-03-01"`, `"2025-03-01T00:00:00Z"`) for `date` or
+  `datetime`, `true`/`false` for `boolean`. A value that cannot be
+  coerced is an error.
+- A column name that is not a valid identifier (spaces, hyphens, a
+  leading digit) is written as a string: `cell(q-x, 2025, "net revenue")`.
+- A cell whose value is `null` cannot be used in arithmetic; doing so is
+  an evaluation error.
 
 Functions:
 
@@ -226,7 +272,13 @@ Functions:
 | `pct_change(old, new)` | `(new - old) / old` |
 | `share(part, total)` | `part / total` |
 | `sum(e, ...)`, `min(e, ...)`, `max(e, ...)` | aggregate over arguments |
-| `rank(x, e, ...)` | 1-based rank of `x` among the arguments, descending |
+| `rank(x, e, ...)` | 1-based rank of `x` among the `e` arguments, descending |
+
+`rank` uses competition ranking: the result is 1 plus the number of `e`
+arguments strictly greater than `x`, so tied values share the best rank
+(values 9, 7, 7, 5 rank 1, 2, 2, 4). `x` must equal at least one `e`
+argument, or evaluation fails. A claim such as "ranked second" over tied
+values is therefore checked against the shared rank.
 
 Division by zero is an evaluation error (the claim fails validation).
 
@@ -243,15 +295,25 @@ compares to the evaluated value:
   A less precise display is a weaker claim: `$4.2M` accepts any value
   that rounds to 4.2 in millions.
 - Percentages: the value is multiplied by 100 before comparison.
-- **Sign:** match by magnitude unless the text carries an explicit sign
-  (`-12.0%`, `+3%`). Direction is checked separately (§4.2).
+- **Sign:** a number has an **explicit sign** when `+`, `-`, or `−`
+  immediately precedes it, or precedes its `$` (`-12.0%`, `+3%`,
+  `-$1.2M`). Without one, the comparison uses magnitude only. With one,
+  the signed displayed value is compared to the signed evaluated value,
+  so `+12.0%` against a value of −0.11995 is a mismatch (an error). Zero
+  matches either sign. Direction words are checked separately (§4.2).
 - Written-out numbers are not parsed and produce a warning.
 
 ### 4.2 Direction check
 
-Applies only to `computed` numbers that express a **change**
-(`pct_change`, or a difference of two cells). It does not apply to
-`direct` numbers.
+Applies only to `computed` numbers that express a **change**. It does
+not apply to `direct` numbers.
+
+A number is a change when the **outermost** operation of its expression,
+after removing enclosing parentheses, is either a `pct_change` call or a
+binary subtraction. `pct_change(a, b)`, `a - b`, and `(a - b)` are
+changes. `(a - b) / a`, `share(a - b, c)`, and `-a` are not, and are not
+direction-checked. An author who wants a ratio checked writes it with
+`pct_change`.
 
 The validator looks for a direction word in the same span:
 
@@ -265,6 +327,16 @@ Outcomes:
   is an **error**.
 - **No** direction word and **no** explicit sign is a **warning**
   ("direction not stated").
+- A direction word and an explicit sign are checked independently: the
+  sign by number matching (§4.1), the word here. "Fell −12.0%" passes
+  both when the value is negative; "fell +12.0%" fails the sign check
+  whatever the word says.
+- A span with words from **both** lists ("revenue fell 12% while costs
+  rose 3%") is not direction-checked, because the validator cannot tell
+  which word belongs to which number. It reports info ("direction
+  ambiguous; split the span"). Each change in its own span gets a full
+  check.
+- A change that evaluates to exactly zero is not direction-checked.
 - Words outside the lexicon are ignored, so a miss means no check, never
   a wrong check.
 - The lexicon is conservative and lives in `spec/expr/direction.json`,
@@ -286,11 +358,16 @@ publish.
 | Expression fails to parse or evaluate | error |
 | Cited cell does not exist in the pinned version | error |
 | Chart data is not a reference to cited evidence | error |
+| Chart uses a disallowed transform or encoding property (§3.6) | error |
+| Claim or chart pins two versions of the same evidence id | error |
+| Key value count does not match key arity, or cannot be coerced | error |
+| Explicit sign does not match the sign of the evaluated value | error |
 | Evidence key is not unique, or hash mismatch | error (rejects write) |
 | Claim pinned to a stale evidence version | warning |
 | Claim tier is `asserted` | info (amber in audit mode) |
 | Direction word contradicts the sign of a computed change | error |
 | Computed change with no direction word and no explicit sign | warning |
+| Span holds both up and down words (direction not checked) | info |
 | Number in block text outside any span | warning |
 | Written-out number in a span | warning |
 | Image chart with figure-level evidence only | info |
@@ -573,3 +650,16 @@ files with the hash in the record (decided later from real data).
   evidence row (§3.6).
 - ~~**O6. Evidence IDs.**~~ Resolved: agent-chosen slugs, unique per
   report, a slug is the identity of the evidence (§3.4).
+- ~~**O7. Chart transforms.**~~ Resolved: Vega-Lite has no `sort` or
+  `limit` transform. Only `filter` is allowed; encoding `sort` is
+  allowed; encoding `aggregate`, `bin`, `timeUnit`, and `impute` are
+  not. Top-N is done in SQL (§3.6).
+- ~~**O8. Cell addressing.**~~ Resolved: empty keys take no key values;
+  the version comes from the claim's pin, at most one version per id;
+  lexical rules for slugs, keys, and columns are defined, and the last
+  `cell` argument is the column (§3.5, §4).
+- ~~**O9. Rank ties.**~~ Resolved: competition ranking (§4).
+- ~~**O10. Change detection and explicit signs.**~~ Resolved: a change
+  is an outermost `pct_change` or subtraction; an explicit sign is
+  checked as part of number matching; spans with both directions are not
+  direction-checked (§4.1, §4.2).
