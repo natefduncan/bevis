@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bevis.dev/schema/bundle/1/manifest.schema.json",
+  "title": "Bevis bundle manifest (manifest.json)",
+  "type": "object",
+  "required": ["schema_version", "report", "version", "disclosure", "validation", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "report": {
+      "type": "object",
+      "required": ["id", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 }
+      }
+    },
+    "version": {
+      "type": "object",
+      "required": ["number", "published_at", "published_by", "override"],
+      "additionalProperties": false,
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "published_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "published_by": { "$ref": "common.schema.json#/$defs/author" },
+        "override": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["reason"],
+              "additionalProperties": false,
+              "properties": {
+                "reason": { "type": "string", "minLength": 1 },
+                "errors_overridden": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "disclosure": { "$ref": "common.schema.json#/$defs/disclosure_level" },
+    "validation": {
+      "type": "object",
+      "required": ["errors", "warnings", "info"],
+      "additionalProperties": false,
+      "properties": {
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "version", "file"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "common.schema.json#/$defs/slug" },
+          "version": { "type": "integer", "minimum": 1 },
+          "file": { "type": "string", "pattern": "^evidence/[a-z][a-z0-9-]{2,63}\\.v[1-9][0-9]*\\.json$" }
+        }
+      }
+    }
+  }
+}

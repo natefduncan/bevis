@@ -155,7 +155,9 @@ An evidence record is **immutable and versioned**.
   `boolean`, `null`. Decimals are exact (serialized as strings, stored
   and evaluated as exact decimals, never floats).
 - **Hash:** SHA-256 over a canonical serialization (columns in declared
-  order, rows sorted by key, typed values in canonical text form).
+  order, rows sorted by key, typed values in canonical text form). The
+  exact serialization and the canonical form of each type are defined in
+  `spec/bundle/README.md`.
 - **Key:** a composite of one or more columns. The host rejects a record
   whose key is not unique. A single-row result may declare an empty key.
 - **Size:** a host-configurable cap on each record, defaulting to
@@ -197,7 +199,9 @@ A chart block is either:
   is a **reference** to a pinned evidence version, never inline values or
   external URLs. Each mark carries its row key, so clicking a mark opens
   that row in the evidence panel. The validator enforces "chart data =
-  cited evidence". Specs have a size and complexity cap.
+  cited evidence". Specs have a size and complexity cap. A spec may not
+  contain a `url` key or an `image` mark anywhere, since either makes the
+  renderer load something from outside the evidence.
   - **Transforms are strict.** The only allowed entry in `transform` is
     `filter`, so each mark corresponds to one evidence row. Every other
     Vega-Lite transform is a validation error. That includes transforms
@@ -290,6 +294,11 @@ argument, or evaluation fails. A claim such as "ranked second" over tied
 values is therefore checked against the shared rank.
 
 Division by zero is an evaluation error (the claim fails validation).
+
+Division (`/`, `pct_change`, `share`) rounds to 34 significant digits,
+half-even (decimal128 precision). Every other operation is exact. Number
+matching (§4.1) rounds this 34-digit result. Error codes and the case
+format are in `spec/expr/README.md`.
 
 ### 4.1 Matching a computed value to displayed text
 
@@ -455,7 +464,7 @@ sent to the browser):
 | Level | Includes |
 |---|---|
 | `full` | all stored rows |
-| `cited` | only rows and columns that claims reference, plus SQL and metadata |
+| `cited` | only rows and columns that claims reference, plus SQL and metadata. A chart references every row it draws and the columns it encodes |
 | `metadata` | SQL, row counts, derivations, assumptions, no data values |
 
 Disclosure applies to the web view, API responses, and exports.
@@ -506,6 +515,7 @@ bundle/
   report.json
   evidence/
     <evidence-id>.v<version>.json
+  assets/          (images for image blocks)
   report.md        (derived)
   report.html      (derived, self-contained)
   report.pdf       (derived)
@@ -517,6 +527,8 @@ bundle/
 - Validation results as of publish time are included.
 - `schema_version` is set on `manifest.json` so old bundles stay
   readable. There is no import in v1.
+- JSON Schemas for each file, the integrity rules a reader enforces, and
+  the value encodings are in `spec/bundle/`.
 
 ### 10.1 `manifest.json`
 

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bevis.dev/schema/bundle/1/report.schema.json",
+  "title": "Bevis report content (report.json)",
+  "type": "object",
+  "required": ["blocks", "claims", "non_data"],
+  "additionalProperties": false,
+  "properties": {
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
+          "type": { "enum": ["heading", "text", "chart", "image"] }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "type": { "const": "heading" } } },
+            "then": {
+              "required": ["level", "text"],
+              "additionalProperties": false,
+              "properties": {
+                "id": true, "type": true,
+                "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+                "text": { "type": "string" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "type": { "const": "text" } } },
+            "then": {
+              "required": ["text"],
+              "additionalProperties": false,
+              "properties": { "id": true, "type": true, "text": { "type": "string" } }
+            }
+          },
+          {
+            "if": { "properties": { "type": { "const": "chart" } } },
+            "then": {
+              "required": ["spec", "evidence"],
+              "additionalProperties": false,
+              "properties": {
+                "id": true, "type": true,
+                "spec": { "type": "object" },
+                "caption": { "type": "string" },
+                "evidence": { "$ref": "common.schema.json#/$defs/pins" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "type": { "const": "image" } } },
+            "then": {
+              "required": ["src", "alt", "evidence"],
+              "additionalProperties": false,
+              "properties": {
+                "id": true, "type": true,
+                "src": { "type": "string", "pattern": "^assets/[A-Za-z0-9._-]+\\.(png|jpg|jpeg|pdf)$" },
+                "alt": { "type": "string" },
+                "caption": { "type": "string" },
+                "evidence": { "$ref": "common.schema.json#/$defs/pins" }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "block_id", "evidence", "numbers", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^c[0-9]+$" },
+          "block_id": { "type": "string" },
+          "evidence": { "$ref": "common.schema.json#/$defs/pins" },
+          "numbers": { "type": "array", "items": { "$ref": "#/$defs/number" } },
+          "derivation": { "type": "string" },
+          "status": { "$ref": "#/$defs/status" }
+        }
+      }
+    },
+    "non_data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["block_id", "text", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "block_id": { "type": "string" },
+          "text": { "type": "string" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "status": { "enum": ["ok", "warning", "error", "unverified"] },
+    "number": {
+      "type": "object",
+      "required": ["text", "tier", "status"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "tier": { "enum": ["direct", "computed", "asserted"] },
+        "status": { "$ref": "#/$defs/status" },
+        "message": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "tier": { "const": "direct" } } },
+          "then": {
+            "required": ["cell"],
+            "additionalProperties": false,
+            "properties": {
+              "text": true, "tier": true, "status": true, "message": true,
+              "cell": {
+                "type": "object",
+                "required": ["evidence", "version", "key", "column"],
+                "additionalProperties": false,
+                "properties": {
+                  "evidence": { "$ref": "common.schema.json#/$defs/slug" },
+                  "version": { "type": "integer", "minimum": 1 },
+                  "key": { "type": "array" },
+                  "column": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "tier": { "const": "computed" } } },
+          "then": {
+            "required": ["expression", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "text": true, "tier": true, "status": true, "message": true,
+              "expression": { "type": "string" },
+              "value": { "type": ["string", "null"], "pattern": "^-?[0-9]+(\\.[0-9]+)?$" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "tier": { "const": "asserted" } } },
+          "then": {
+            "required": ["derivation"],
+            "additionalProperties": false,
+            "properties": {
+              "text": true, "tier": true, "status": true, "message": true,
+              "derivation": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

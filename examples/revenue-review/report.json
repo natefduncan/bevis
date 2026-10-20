@@ -1,0 +1,322 @@
+{
+  "blocks": [
+    {
+      "id": "b1",
+      "type": "heading",
+      "level": 1,
+      "text": "Revenue Review: 2024 vs 2025"
+    },
+    {
+      "id": "b2",
+      "type": "text",
+      "text": "[Revenue fell 12.0%, from $4.21M to $3.71M]{#c1}. The decline was broad, but not even: one segment accounts for most of it."
+    },
+    {
+      "id": "b3",
+      "type": "heading",
+      "level": 2,
+      "text": "Where the decline came from"
+    },
+    {
+      "id": "b4",
+      "type": "text",
+      "text": "[Mid-market revenue dropped $275K, 54% of the total decrease]{#c2}. In 2025, [Enterprise remained the largest segment, at 53% of revenue]{#c3}.\n\nLost accounts explain much of the gap: [142 accounts churned, taking $1.02M of prior-year revenue with them]{#c4}."
+    },
+    {
+      "id": "b5",
+      "type": "chart",
+      "caption": "Revenue by segment and year",
+      "evidence": [
+        {
+          "id": "q-seg-delta",
+          "version": 1
+        }
+      ],
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {
+          "evidence": {
+            "id": "q-seg-delta",
+            "version": 1
+          }
+        },
+        "width": 360,
+        "height": 200,
+        "mark": "bar",
+        "encoding": {
+          "x": {
+            "field": "segment",
+            "type": "nominal",
+            "title": null,
+            "axis": {
+              "labelAngle": 0
+            }
+          },
+          "xOffset": {
+            "field": "year",
+            "type": "nominal"
+          },
+          "y": {
+            "field": "revenue",
+            "type": "quantitative",
+            "title": "Revenue ($)",
+            "axis": {
+              "format": "~s"
+            }
+          },
+          "color": {
+            "field": "year",
+            "type": "nominal",
+            "title": "Year"
+          }
+        }
+      }
+    },
+    {
+      "id": "b6",
+      "type": "heading",
+      "level": 2,
+      "text": "Accounts behind the decline"
+    },
+    {
+      "id": "b7",
+      "type": "text",
+      "text": "[The largest single decline was Northwind Traders, down $84.2K]{#c6}, and [the three largest declines together came to $201K]{#c7}. [The decline is concentrated in accounts that renewed onto the new pricing tier]{#c5}."
+    },
+    {
+      "id": "b8",
+      "type": "chart",
+      "caption": "Monthly revenue",
+      "evidence": [
+        {
+          "id": "q-monthly",
+          "version": 1
+        }
+      ],
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {
+          "evidence": {
+            "id": "q-monthly",
+            "version": 1
+          }
+        },
+        "width": 420,
+        "height": 180,
+        "mark": {
+          "type": "line",
+          "point": true
+        },
+        "encoding": {
+          "x": {
+            "field": "month",
+            "type": "temporal",
+            "title": null
+          },
+          "y": {
+            "field": "revenue",
+            "type": "quantitative",
+            "title": "Revenue ($)",
+            "axis": {
+              "format": "~s"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "claims": [
+    {
+      "id": "c1",
+      "block_id": "b2",
+      "evidence": [
+        {
+          "id": "q-rev-yoy",
+          "version": 1
+        }
+      ],
+      "numbers": [
+        {
+          "text": "12.0%",
+          "tier": "computed",
+          "expression": "pct_change(cell(q-rev-yoy, 2024, revenue), cell(q-rev-yoy, 2025, revenue))",
+          "value": "-0.1199524940617577197149643705463183",
+          "status": "ok"
+        },
+        {
+          "text": "$4.21M",
+          "tier": "direct",
+          "cell": {
+            "evidence": "q-rev-yoy",
+            "version": 1,
+            "key": [
+              2024
+            ],
+            "column": "revenue"
+          },
+          "status": "ok"
+        },
+        {
+          "text": "$3.71M",
+          "tier": "direct",
+          "cell": {
+            "evidence": "q-rev-yoy",
+            "version": 1,
+            "key": [
+              2025
+            ],
+            "column": "revenue"
+          },
+          "status": "ok"
+        }
+      ],
+      "status": "ok"
+    },
+    {
+      "id": "c2",
+      "block_id": "b4",
+      "evidence": [
+        {
+          "id": "q-seg-delta",
+          "version": 1
+        },
+        {
+          "id": "q-rev-yoy",
+          "version": 1
+        }
+      ],
+      "numbers": [
+        {
+          "text": "$275K",
+          "tier": "computed",
+          "expression": "cell(q-seg-delta, \"Mid-market\", 2025, revenue) - cell(q-seg-delta, \"Mid-market\", 2024, revenue)",
+          "value": "-275000",
+          "status": "ok"
+        },
+        {
+          "text": "54%",
+          "tier": "computed",
+          "expression": "share(cell(q-seg-delta, \"Mid-market\", 2024, revenue) - cell(q-seg-delta, \"Mid-market\", 2025, revenue), cell(q-rev-yoy, 2024, revenue) - cell(q-rev-yoy, 2025, revenue))",
+          "value": "0.5445544554455445544554455445544554",
+          "status": "ok"
+        }
+      ],
+      "status": "ok"
+    },
+    {
+      "id": "c3",
+      "block_id": "b4",
+      "evidence": [
+        {
+          "id": "q-seg-delta",
+          "version": 1
+        }
+      ],
+      "numbers": [
+        {
+          "text": "53%",
+          "tier": "computed",
+          "expression": "share(cell(q-seg-delta, \"Enterprise\", 2025, revenue), sum(cell(q-seg-delta, \"Enterprise\", 2025, revenue), cell(q-seg-delta, \"Mid-market\", 2025, revenue), cell(q-seg-delta, \"SMB\", 2025, revenue)))",
+          "value": "0.5263157894736842105263157894736842",
+          "status": "ok"
+        }
+      ],
+      "status": "ok"
+    },
+    {
+      "id": "c4",
+      "block_id": "b4",
+      "evidence": [
+        {
+          "id": "q-churn",
+          "version": 1
+        }
+      ],
+      "numbers": [
+        {
+          "text": "142",
+          "tier": "direct",
+          "cell": {
+            "evidence": "q-churn",
+            "version": 1,
+            "key": [],
+            "column": "churned_accounts"
+          },
+          "status": "ok"
+        },
+        {
+          "text": "$1.02M",
+          "tier": "direct",
+          "cell": {
+            "evidence": "q-churn",
+            "version": 1,
+            "key": [],
+            "column": "churned_revenue"
+          },
+          "status": "ok"
+        }
+      ],
+      "status": "ok"
+    },
+    {
+      "id": "c5",
+      "block_id": "b7",
+      "evidence": [
+        {
+          "id": "q-top-accounts",
+          "version": 1
+        }
+      ],
+      "numbers": [],
+      "derivation": "Read from the account list: most of the largest declines are accounts whose 2025 renewal moved them to the new tier. Tier is not in this query.",
+      "status": "unverified"
+    },
+    {
+      "id": "c6",
+      "block_id": "b7",
+      "evidence": [
+        {
+          "id": "q-top-accounts",
+          "version": 1
+        }
+      ],
+      "numbers": [
+        {
+          "text": "$84.2K",
+          "tier": "direct",
+          "cell": {
+            "evidence": "q-top-accounts",
+            "version": 1,
+            "key": [
+              "A-1042"
+            ],
+            "column": "change"
+          },
+          "status": "ok"
+        }
+      ],
+      "status": "ok"
+    },
+    {
+      "id": "c7",
+      "block_id": "b7",
+      "evidence": [
+        {
+          "id": "q-top-accounts",
+          "version": 1
+        }
+      ],
+      "numbers": [
+        {
+          "text": "$201K",
+          "tier": "computed",
+          "expression": "sum(cell(q-top-accounts, \"A-1042\", change), cell(q-top-accounts, \"A-1079\", change), cell(q-top-accounts, \"A-1116\", change))",
+          "value": "-201410",
+          "status": "ok"
+        }
+      ],
+      "status": "ok"
+    }
+  ],
+  "non_data": []
+}

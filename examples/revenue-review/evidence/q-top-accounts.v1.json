@@ -1,0 +1,374 @@
+{
+  "id": "q-top-accounts",
+  "version": 1,
+  "source": "warehouse.orders",
+  "sql": "WITH by_account AS (\n  SELECT account_id,\n         SUM(amount) FILTER (WHERE year = 2024) AS rev_2024,\n         SUM(amount) FILTER (WHERE year = 2025) AS rev_2025\n  FROM orders WHERE refunded = false GROUP BY account_id\n)\nSELECT b.account_id, a.name AS account_name, a.segment, b.rev_2024, b.rev_2025,\n       b.rev_2025 - b.rev_2024 AS change\nFROM by_account b JOIN accounts a USING (account_id)\nWHERE b.rev_2024 > 0\nORDER BY change ASC\nLIMIT :n;",
+  "params": {
+    "n": 40
+  },
+  "run_at": "2026-10-20T14:01:47Z",
+  "provenance": "agent-reported",
+  "key": [
+    "account_id"
+  ],
+  "columns": [
+    {
+      "name": "account_id",
+      "type": "string"
+    },
+    {
+      "name": "account_name",
+      "type": "string"
+    },
+    {
+      "name": "segment",
+      "type": "string"
+    },
+    {
+      "name": "rev_2024",
+      "type": "decimal"
+    },
+    {
+      "name": "rev_2025",
+      "type": "decimal"
+    },
+    {
+      "name": "change",
+      "type": "decimal"
+    }
+  ],
+  "rows": [
+    [
+      "A-1042",
+      "Northwind Traders",
+      "Mid-market",
+      "120000",
+      "35790",
+      "-84210"
+    ],
+    [
+      "A-1079",
+      "Blue Heron Supply",
+      "Enterprise",
+      "127919",
+      "65519",
+      "-62400"
+    ],
+    [
+      "A-1116",
+      "Cedar Logistics",
+      "SMB",
+      "135838",
+      "81038",
+      "-54800"
+    ],
+    [
+      "A-1153",
+      "Halcyon Traders",
+      "Mid-market",
+      "143757",
+      "102507",
+      "-41250"
+    ],
+    [
+      "A-1190",
+      "Ironbark Supply",
+      "Enterprise",
+      "151676",
+      "112776",
+      "-38900"
+    ],
+    [
+      "A-1227",
+      "Juniper Logistics",
+      "SMB",
+      "159595",
+      "126475",
+      "-33120"
+    ],
+    [
+      "A-1264",
+      "Kestrel Traders",
+      "Mid-market",
+      "167514",
+      "137034",
+      "-30480"
+    ],
+    [
+      "A-1301",
+      "Lumen Supply",
+      "Enterprise",
+      "175433",
+      "146683",
+      "-28750"
+    ],
+    [
+      "A-1338",
+      "Meridian Logistics",
+      "SMB",
+      "183352",
+      "157342",
+      "-26010"
+    ],
+    [
+      "A-1375",
+      "Nimbus Traders",
+      "Mid-market",
+      "191271",
+      "166871",
+      "-24400"
+    ],
+    [
+      "A-1412",
+      "Orchard Supply",
+      "Enterprise",
+      "199190",
+      "177190",
+      "-22000"
+    ],
+    [
+      "A-1449",
+      "Pinecrest Logistics",
+      "SMB",
+      "207109",
+      "185759",
+      "-21350"
+    ],
+    [
+      "A-1486",
+      "Quarry Traders",
+      "Mid-market",
+      "125028",
+      "104328",
+      "-20700"
+    ],
+    [
+      "A-1523",
+      "Redwood Supply",
+      "Enterprise",
+      "132947",
+      "112897",
+      "-20050"
+    ],
+    [
+      "A-1560",
+      "Saltmarsh Logistics",
+      "SMB",
+      "140866",
+      "121466",
+      "-19400"
+    ],
+    [
+      "A-1597",
+      "Tidewater Traders",
+      "Mid-market",
+      "148785",
+      "130035",
+      "-18750"
+    ],
+    [
+      "A-1634",
+      "Upland Supply",
+      "Enterprise",
+      "156704",
+      "138604",
+      "-18100"
+    ],
+    [
+      "A-1671",
+      "Vantage Logistics",
+      "SMB",
+      "164623",
+      "147173",
+      "-17450"
+    ],
+    [
+      "A-1708",
+      "Westfield Traders",
+      "Mid-market",
+      "172542",
+      "155742",
+      "-16800"
+    ],
+    [
+      "A-1745",
+      "Yarrow Supply",
+      "Enterprise",
+      "180461",
+      "164311",
+      "-16150"
+    ],
+    [
+      "A-1782",
+      "Northwind Logistics",
+      "SMB",
+      "188380",
+      "172880",
+      "-15500"
+    ],
+    [
+      "A-1819",
+      "Blue Heron Traders",
+      "Mid-market",
+      "196299",
+      "181449",
+      "-14850"
+    ],
+    [
+      "A-1856",
+      "Cedar Supply",
+      "Enterprise",
+      "204218",
+      "190018",
+      "-14200"
+    ],
+    [
+      "A-1893",
+      "Halcyon Logistics",
+      "SMB",
+      "122137",
+      "108587",
+      "-13550"
+    ],
+    [
+      "A-1930",
+      "Ironbark Traders",
+      "Mid-market",
+      "130056",
+      "117156",
+      "-12900"
+    ],
+    [
+      "A-1967",
+      "Juniper Supply",
+      "Enterprise",
+      "137975",
+      "125725",
+      "-12250"
+    ],
+    [
+      "A-2004",
+      "Kestrel Logistics",
+      "SMB",
+      "145894",
+      "134294",
+      "-11600"
+    ],
+    [
+      "A-2041",
+      "Lumen Traders",
+      "Mid-market",
+      "153813",
+      "142863",
+      "-10950"
+    ],
+    [
+      "A-2078",
+      "Meridian Supply",
+      "Enterprise",
+      "161732",
+      "151432",
+      "-10300"
+    ],
+    [
+      "A-2115",
+      "Nimbus Logistics",
+      "SMB",
+      "169651",
+      "160001",
+      "-9650"
+    ],
+    [
+      "A-2152",
+      "Orchard Traders",
+      "Mid-market",
+      "177570",
+      "168570",
+      "-9000"
+    ],
+    [
+      "A-2189",
+      "Pinecrest Supply",
+      "Enterprise",
+      "185489",
+      "177139",
+      "-8350"
+    ],
+    [
+      "A-2226",
+      "Quarry Logistics",
+      "SMB",
+      "193408",
+      "185708",
+      "-7700"
+    ],
+    [
+      "A-2263",
+      "Redwood Traders",
+      "Mid-market",
+      "201327",
+      "194277",
+      "-7050"
+    ],
+    [
+      "A-2300",
+      "Saltmarsh Supply",
+      "Enterprise",
+      "209246",
+      "202846",
+      "-6400"
+    ],
+    [
+      "A-2337",
+      "Tidewater Logistics",
+      "SMB",
+      "127165",
+      "121415",
+      "-5750"
+    ],
+    [
+      "A-2374",
+      "Upland Traders",
+      "Mid-market",
+      "135084",
+      "129984",
+      "-5100"
+    ],
+    [
+      "A-2411",
+      "Vantage Supply",
+      "Enterprise",
+      "143003",
+      "138553",
+      "-4450"
+    ],
+    [
+      "A-2448",
+      "Westfield Logistics",
+      "SMB",
+      "150922",
+      "147122",
+      "-3800"
+    ],
+    [
+      "A-2485",
+      "Yarrow Traders",
+      "Mid-market",
+      "158841",
+      "155691",
+      "-3150"
+    ]
+  ],
+  "row_count": 40,
+  "data_hash": "sha256:2e774fbdef96c0956c28a0193c302a5207a74612316d2160f46f239df4bd4bd9",
+  "assumptions": [
+    "accounts with no 2024 revenue are excluded (new logos)",
+    "top 40 by decline; the full result has one row per retained account"
+  ],
+  "partial": true,
+  "source_row_count": 1284,
+  "disclosure": {
+    "level": "full",
+    "withheld_rows": 0
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "id": "q-seg-delta",
+  "version": 1,
+  "source": "warehouse.orders",
+  "sql": "SELECT a.segment, o.year, SUM(o.amount) AS revenue, COUNT(DISTINCT o.account_id) AS customers\nFROM orders o JOIN accounts a USING (account_id)\nWHERE o.refunded = false AND o.year IN (2024, 2025)\nGROUP BY a.segment, o.year\nORDER BY a.segment, o.year;",
+  "params": {},
+  "run_at": "2026-10-20T14:01:47Z",
+  "provenance": "agent-reported",
+  "key": [
+    "segment",
+    "year"
+  ],
+  "columns": [
+    {
+      "name": "segment",
+      "type": "string"
+    },
+    {
+      "name": "year",
+      "type": "integer"
+    },
+    {
+      "name": "revenue",
+      "type": "decimal"
+    },
+    {
+      "name": "customers",
+      "type": "integer"
+    }
+  ],
+  "rows": [
+    [
+      "Enterprise",
+      2024,
+      "2100000",
+      61
+    ],
+    [
+      "Enterprise",
+      2025,
+      "1950000",
+      58
+    ],
+    [
+      "Mid-market",
+      2024,
+      "1460000",
+      412
+    ],
+    [
+      "Mid-market",
+      2025,
+      "1185000",
+      366
+    ],
+    [
+      "SMB",
+      2024,
+      "650000",
+      1903
+    ],
+    [
+      "SMB",
+      2025,
+      "570000",
+      1821
+    ]
+  ],
+  "row_count": 6,
+  "data_hash": "sha256:0f862ab1749ca9a032259888a39de53898ff05a92e60e865681590c58400e5da",
+  "assumptions": [
+    "segment is the account's segment at year end",
+    "revenue = SUM(amount), refunds excluded"
+  ],
+  "disclosure": {
+    "level": "full",
+    "withheld_rows": 0
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bevis.dev/schema/bundle/1/common.schema.json",
+  "title": "Shared definitions for Bevis bundles",
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$"
+    },
+    "pin": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "pins": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pin" }
+    },
+    "disclosure_level": { "enum": ["full", "cited", "metadata"] },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "author": {
+      "type": "object",
+      "required": ["kind", "name", "verified"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["human", "agent"] },
+        "name": { "type": "string", "minLength": 1 },
+        "verified": { "type": "boolean" }
+      }
+    }
+  }
+}

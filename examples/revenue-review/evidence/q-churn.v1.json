@@ -1,0 +1,35 @@
+{
+  "id": "q-churn",
+  "version": 1,
+  "source": "warehouse.accounts",
+  "sql": "SELECT COUNT(*) AS churned_accounts, SUM(rev_2024) AS churned_revenue\nFROM account_years WHERE rev_2024 > 0 AND COALESCE(rev_2025, 0) = 0;",
+  "params": {},
+  "run_at": "2026-10-20T14:01:47Z",
+  "provenance": "agent-reported",
+  "key": [],
+  "columns": [
+    {
+      "name": "churned_accounts",
+      "type": "integer"
+    },
+    {
+      "name": "churned_revenue",
+      "type": "decimal"
+    }
+  ],
+  "rows": [
+    [
+      142,
+      "1018450.00"
+    ]
+  ],
+  "row_count": 1,
+  "data_hash": "sha256:989553671dc7c9559f1211d6c794c04c1637b2be1bd8c2709005ccd079b1d3a2",
+  "assumptions": [
+    "churned = revenue in 2024 and none in 2025"
+  ],
+  "disclosure": {
+    "level": "full",
+    "withheld_rows": 0
+  }
+}

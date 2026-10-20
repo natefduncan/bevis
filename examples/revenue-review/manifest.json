@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "report": {
+    "id": "rpt_01",
+    "title": "Revenue Review: 2024 vs 2025"
+  },
+  "version": {
+    "number": 3,
+    "published_at": "2026-10-20T14:30:00Z",
+    "published_by": {
+      "kind": "human",
+      "name": "Nate Duncan",
+      "verified": false
+    },
+    "override": null
+  },
+  "disclosure": "full",
+  "validation": {
+    "errors": 0,
+    "warnings": 0,
+    "info": 1
+  },
+  "evidence": [
+    {
+      "id": "q-rev-yoy",
+      "version": 1,
+      "file": "evidence/q-rev-yoy.v1.json"
+    },
+    {
+      "id": "q-seg-delta",
+      "version": 1,
+      "file": "evidence/q-seg-delta.v1.json"
+    },
+    {
+      "id": "q-monthly",
+      "version": 1,
+      "file": "evidence/q-monthly.v1.json"
+    },
+    {
+      "id": "q-top-accounts",
+      "version": 1,
+      "file": "evidence/q-top-accounts.v1.json"
+    },
+    {
+      "id": "q-churn",
+      "version": 1,
+      "file": "evidence/q-churn.v1.json"
+    }
+  ]
+}

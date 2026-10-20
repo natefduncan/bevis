@@ -1,0 +1,984 @@
+{
+  "description": "Shared test cases for the Bevis expression language. See README.md.",
+  "evidence": {
+    "q-rev-yoy": {
+      "key": [
+        "year"
+      ],
+      "columns": [
+        {
+          "name": "year",
+          "type": "integer"
+        },
+        {
+          "name": "revenue",
+          "type": "decimal"
+        }
+      ],
+      "rows": [
+        [
+          2024,
+          "4210000"
+        ],
+        [
+          2025,
+          "3705000"
+        ]
+      ]
+    },
+    "q-seg-delta": {
+      "key": [
+        "segment",
+        "year"
+      ],
+      "columns": [
+        {
+          "name": "segment",
+          "type": "string"
+        },
+        {
+          "name": "year",
+          "type": "integer"
+        },
+        {
+          "name": "revenue",
+          "type": "decimal"
+        },
+        {
+          "name": "churn_rate",
+          "type": "decimal"
+        }
+      ],
+      "rows": [
+        [
+          "Enterprise",
+          2024,
+          "2100000",
+          "0.041"
+        ],
+        [
+          "Enterprise",
+          2025,
+          "1950000",
+          "0.052"
+        ],
+        [
+          "Mid-market",
+          2024,
+          "1460000",
+          "0.088"
+        ],
+        [
+          "Mid-market",
+          2025,
+          "1185000",
+          null
+        ],
+        [
+          "SMB",
+          2024,
+          "650000",
+          "0.120"
+        ],
+        [
+          "SMB",
+          2025,
+          "570000",
+          "0.131"
+        ]
+      ]
+    },
+    "q-total": {
+      "key": [],
+      "columns": [
+        {
+          "name": "revenue",
+          "type": "decimal"
+        },
+        {
+          "name": "net revenue",
+          "type": "decimal"
+        },
+        {
+          "name": "as_of",
+          "type": "date"
+        }
+      ],
+      "rows": [
+        [
+          "3705000",
+          "3500000.50",
+          "2025-12-31"
+        ]
+      ]
+    },
+    "q-rank": {
+      "key": [
+        "region"
+      ],
+      "columns": [
+        {
+          "name": "region",
+          "type": "string"
+        },
+        {
+          "name": "score",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          "North",
+          9
+        ],
+        [
+          "South",
+          7
+        ],
+        [
+          "East",
+          7
+        ],
+        [
+          "West",
+          5
+        ]
+      ]
+    },
+    "q-daily": {
+      "key": [
+        "day"
+      ],
+      "columns": [
+        {
+          "name": "day",
+          "type": "date"
+        },
+        {
+          "name": "visits",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          "2025-03-01",
+          120
+        ],
+        [
+          "2025-03-02",
+          95
+        ]
+      ]
+    },
+    "q-events": {
+      "key": [
+        "at"
+      ],
+      "columns": [
+        {
+          "name": "at",
+          "type": "datetime"
+        },
+        {
+          "name": "count",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          "2025-03-01T00:00:00Z",
+          4
+        ]
+      ]
+    },
+    "q-flags": {
+      "key": [
+        "active"
+      ],
+      "columns": [
+        {
+          "name": "active",
+          "type": "boolean"
+        },
+        {
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          true,
+          30
+        ],
+        [
+          false,
+          12
+        ]
+      ]
+    },
+    "q-buckets": {
+      "key": [
+        "bucket"
+      ],
+      "columns": [
+        {
+          "name": "bucket",
+          "type": "integer"
+        },
+        {
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          -1,
+          3
+        ],
+        [
+          0,
+          8
+        ],
+        [
+          1,
+          5
+        ]
+      ]
+    },
+    "q-rates": {
+      "key": [
+        "rate"
+      ],
+      "columns": [
+        {
+          "name": "rate",
+          "type": "decimal"
+        },
+        {
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          "0.5",
+          11
+        ],
+        [
+          "0.75",
+          6
+        ]
+      ]
+    },
+    "q-labels": {
+      "key": [
+        "label"
+      ],
+      "columns": [
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "rows": [
+        [
+          "say \"hi\"",
+          2
+        ],
+        [
+          "back\\slash",
+          3
+        ],
+        [
+          null,
+          7
+        ]
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "precedence",
+      "expr": "1 + 2 * 3",
+      "expect": {
+        "value": "7"
+      }
+    },
+    {
+      "name": "parentheses",
+      "expr": "(1 + 2) * 3",
+      "expect": {
+        "value": "9"
+      }
+    },
+    {
+      "name": "subtraction is left-associative",
+      "expr": "10 - 4 - 3",
+      "expect": {
+        "value": "3"
+      }
+    },
+    {
+      "name": "division is left-associative",
+      "expr": "8 / 4 / 2",
+      "expect": {
+        "value": "1"
+      }
+    },
+    {
+      "name": "unary minus binds to a factor",
+      "expr": "2 * -3",
+      "expect": {
+        "value": "-6"
+      }
+    },
+    {
+      "name": "double negation",
+      "expr": "--5",
+      "expect": {
+        "value": "5"
+      }
+    },
+    {
+      "name": "negative zero is zero",
+      "expr": "-0",
+      "expect": {
+        "value": "0"
+      }
+    },
+    {
+      "name": "exact decimal addition",
+      "expr": "0.1 + 0.2",
+      "expect": {
+        "value": "0.3"
+      }
+    },
+    {
+      "name": "trailing zeros are dropped",
+      "expr": "1.50 * 2",
+      "expect": {
+        "value": "3"
+      }
+    },
+    {
+      "name": "leading zeros are allowed",
+      "expr": "007 + 1",
+      "expect": {
+        "value": "8"
+      }
+    },
+    {
+      "name": "exact multiplication keeps all digits",
+      "expr": "123456789.123456789 * 987654321.987654321",
+      "expect": {
+        "value": "121932631356500531.347203169112635269"
+      }
+    },
+    {
+      "name": "terminating division is exact",
+      "expr": "1 / 8",
+      "expect": {
+        "value": "0.125"
+      }
+    },
+    {
+      "name": "division rounds to 34 significant digits",
+      "expr": "1 / 3",
+      "expect": {
+        "value": "0.3333333333333333333333333333333333"
+      }
+    },
+    {
+      "name": "division rounds half-even at digit 34",
+      "expr": "2 / 3",
+      "expect": {
+        "value": "0.6666666666666666666666666666666667"
+      }
+    },
+    {
+      "name": "division of a large numerator",
+      "expr": "10000000000 / 7",
+      "expect": {
+        "value": "1428571428.571428571428571428571429"
+      }
+    },
+    {
+      "name": "each division rounds separately",
+      "expr": "(1 / 3) * 3",
+      "expect": {
+        "value": "0.9999999999999999999999999999999999"
+      }
+    },
+    {
+      "name": "whitespace is ignored",
+      "expr": "  pct_change ( 1 ,2 )\n",
+      "expect": {
+        "value": "1"
+      }
+    },
+    {
+      "name": "direct cell",
+      "expr": "cell(q-rev-yoy, 2025, revenue)",
+      "expect": {
+        "value": "3705000"
+      }
+    },
+    {
+      "name": "no whitespace in cell",
+      "expr": "cell(q-rev-yoy,2025,revenue)",
+      "expect": {
+        "value": "3705000"
+      }
+    },
+    {
+      "name": "two-column key",
+      "expr": "cell(q-seg-delta, \"Mid-market\", 2025, revenue)",
+      "expect": {
+        "value": "1185000"
+      }
+    },
+    {
+      "name": "empty key takes no key values",
+      "expr": "cell(q-total, revenue)",
+      "expect": {
+        "value": "3705000"
+      }
+    },
+    {
+      "name": "quoted column name",
+      "expr": "cell(q-total, \"net revenue\")",
+      "expect": {
+        "value": "3500000.5"
+      }
+    },
+    {
+      "name": "quoted column name that is an identifier",
+      "expr": "cell(q-rev-yoy, 2024, \"revenue\")",
+      "expect": {
+        "value": "4210000"
+      }
+    },
+    {
+      "name": "integral decimal literal matches an integer key",
+      "expr": "cell(q-rev-yoy, 2024.0, revenue)",
+      "expect": {
+        "value": "4210000"
+      }
+    },
+    {
+      "name": "negative key value",
+      "expr": "cell(q-buckets, -1, n)",
+      "expect": {
+        "value": "3"
+      }
+    },
+    {
+      "name": "zero key value",
+      "expr": "cell(q-buckets, 0, n)",
+      "expect": {
+        "value": "8"
+      }
+    },
+    {
+      "name": "decimal key compares by value",
+      "expr": "cell(q-rates, 0.50, n)",
+      "expect": {
+        "value": "11"
+      }
+    },
+    {
+      "name": "date key",
+      "expr": "cell(q-daily, \"2025-03-02\", visits)",
+      "expect": {
+        "value": "95"
+      }
+    },
+    {
+      "name": "datetime key with Z",
+      "expr": "cell(q-events, \"2025-03-01T00:00:00Z\", count)",
+      "expect": {
+        "value": "4"
+      }
+    },
+    {
+      "name": "datetime key with an equivalent offset",
+      "expr": "cell(q-events, \"2025-03-01T01:00:00+01:00\", count)",
+      "expect": {
+        "value": "4"
+      }
+    },
+    {
+      "name": "boolean key",
+      "expr": "cell(q-flags, false, n)",
+      "expect": {
+        "value": "12"
+      }
+    },
+    {
+      "name": "null key",
+      "expr": "cell(q-labels, null, n)",
+      "expect": {
+        "value": "7"
+      }
+    },
+    {
+      "name": "escaped quote in a key",
+      "expr": "cell(q-labels, \"say \\\"hi\\\"\", n)",
+      "expect": {
+        "value": "2"
+      }
+    },
+    {
+      "name": "escaped backslash in a key",
+      "expr": "cell(q-labels, \"back\\\\slash\", n)",
+      "expect": {
+        "value": "3"
+      }
+    },
+    {
+      "name": "pct_change",
+      "expr": "pct_change(cell(q-rev-yoy, 2024, revenue), cell(q-rev-yoy, 2025, revenue))",
+      "expect": {
+        "value": "-0.1199524940617577197149643705463183"
+      }
+    },
+    {
+      "name": "subtraction of cells",
+      "expr": "cell(q-rev-yoy, 2025, revenue) - cell(q-rev-yoy, 2024, revenue)",
+      "expect": {
+        "value": "-505000"
+      }
+    },
+    {
+      "name": "share",
+      "expr": "share(cell(q-seg-delta, \"Enterprise\", 2025, revenue), cell(q-total, revenue))",
+      "expect": {
+        "value": "0.5263157894736842105263157894736842"
+      }
+    },
+    {
+      "name": "sum",
+      "expr": "sum(cell(q-seg-delta, \"Enterprise\", 2025, revenue), cell(q-seg-delta, \"Mid-market\", 2025, revenue), cell(q-seg-delta, \"SMB\", 2025, revenue))",
+      "expect": {
+        "value": "3705000"
+      }
+    },
+    {
+      "name": "sum of one",
+      "expr": "sum(4)",
+      "expect": {
+        "value": "4"
+      }
+    },
+    {
+      "name": "min",
+      "expr": "min(3, -2, 7)",
+      "expect": {
+        "value": "-2"
+      }
+    },
+    {
+      "name": "max",
+      "expr": "max(3, -2, 7)",
+      "expect": {
+        "value": "7"
+      }
+    },
+    {
+      "name": "min compares by value",
+      "expr": "min(1.0, 1)",
+      "expect": {
+        "value": "1"
+      }
+    },
+    {
+      "name": "rank of the largest is 1",
+      "expr": "rank(cell(q-rank, \"North\", score), cell(q-rank, \"North\", score), cell(q-rank, \"South\", score), cell(q-rank, \"East\", score), cell(q-rank, \"West\", score))",
+      "expect": {
+        "value": "1"
+      }
+    },
+    {
+      "name": "tied values share the best rank",
+      "expr": "rank(cell(q-rank, \"East\", score), cell(q-rank, \"North\", score), cell(q-rank, \"South\", score), cell(q-rank, \"East\", score), cell(q-rank, \"West\", score))",
+      "expect": {
+        "value": "2"
+      }
+    },
+    {
+      "name": "rank after a tie skips",
+      "expr": "rank(cell(q-rank, \"West\", score), cell(q-rank, \"North\", score), cell(q-rank, \"South\", score), cell(q-rank, \"East\", score), cell(q-rank, \"West\", score))",
+      "expect": {
+        "value": "4"
+      }
+    },
+    {
+      "name": "rank matches by value",
+      "expr": "rank(7, 9, 7.00, 5)",
+      "expect": {
+        "value": "2"
+      }
+    },
+    {
+      "name": "arithmetic on function results",
+      "expr": "pct_change(cell(q-rev-yoy, 2024, revenue), cell(q-rev-yoy, 2025, revenue)) * 100",
+      "expect": {
+        "value": "-11.99524940617577197149643705463183"
+      }
+    },
+    {
+      "name": "empty input",
+      "expr": "",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "dangling operator",
+      "expr": "1 +",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "two numbers",
+      "expr": "1 2",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "unclosed parenthesis",
+      "expr": "(1 + 2",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "exponent",
+      "expr": "1e5",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "thousands separator",
+      "expr": "1,000",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "trailing decimal point",
+      "expr": "1.",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "leading decimal point",
+      "expr": ".5",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "percent sign",
+      "expr": "12%",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "unknown function",
+      "expr": "avg(1, 2)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "function names are case-sensitive",
+      "expr": "PCT_CHANGE(1, 2)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "cell is case-sensitive",
+      "expr": "Cell(q-rev-yoy, 2024, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "bare identifier",
+      "expr": "revenue",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "pct_change takes two arguments",
+      "expr": "pct_change(1)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "share takes two arguments",
+      "expr": "share(1, 2, 3)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "sum needs an argument",
+      "expr": "sum()",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "rank needs a value and a list",
+      "expr": "rank(1)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "cell needs a column",
+      "expr": "cell(q-rev-yoy)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "column cannot be a number",
+      "expr": "cell(q-rev-yoy, 2024, 7)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "true in the last position is a column name",
+      "expr": "cell(q-rev-yoy, 2024, true)",
+      "expect": {
+        "error": "missing_column"
+      }
+    },
+    {
+      "name": "evidence id too short",
+      "expr": "cell(qx, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "evidence id must be lowercase",
+      "expr": "cell(Q-rev-yoy, 2024, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "evidence id cannot start with a digit",
+      "expr": "cell(1q-rev, 2024, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "evidence id cannot be a string",
+      "expr": "cell(\"q-rev-yoy\", 2024, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "key value cannot be an identifier",
+      "expr": "cell(q-rev-yoy, year, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "key value cannot be an expression",
+      "expr": "cell(q-rev-yoy, 2023 + 1, revenue)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "unknown escape",
+      "expr": "cell(q-labels, \"a\\n\", n)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "unterminated string",
+      "expr": "cell(q-labels, \"abc, n)",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "unicode minus is not an operator",
+      "expr": "5 − 3",
+      "expect": {
+        "error": "parse"
+      }
+    },
+    {
+      "name": "division by zero",
+      "expr": "1 / 0",
+      "expect": {
+        "error": "division_by_zero"
+      }
+    },
+    {
+      "name": "division by a zero expression",
+      "expr": "1 / (2 - 2)",
+      "expect": {
+        "error": "division_by_zero"
+      }
+    },
+    {
+      "name": "pct_change from zero",
+      "expr": "pct_change(0, 5)",
+      "expect": {
+        "error": "division_by_zero"
+      }
+    },
+    {
+      "name": "share of a zero total",
+      "expr": "share(1, 0)",
+      "expect": {
+        "error": "division_by_zero"
+      }
+    },
+    {
+      "name": "unknown evidence",
+      "expr": "cell(q-nope, 2024, revenue)",
+      "expect": {
+        "error": "unknown_evidence"
+      }
+    },
+    {
+      "name": "too few key values",
+      "expr": "cell(q-rev-yoy, revenue)",
+      "expect": {
+        "error": "key_arity"
+      }
+    },
+    {
+      "name": "too many key values",
+      "expr": "cell(q-rev-yoy, 2024, 1, revenue)",
+      "expect": {
+        "error": "key_arity"
+      }
+    },
+    {
+      "name": "key values for an empty key",
+      "expr": "cell(q-total, 1, revenue)",
+      "expect": {
+        "error": "key_arity"
+      }
+    },
+    {
+      "name": "string for an integer key",
+      "expr": "cell(q-rev-yoy, \"2024\", revenue)",
+      "expect": {
+        "error": "key_coercion"
+      }
+    },
+    {
+      "name": "fraction for an integer key",
+      "expr": "cell(q-rev-yoy, 2024.5, revenue)",
+      "expect": {
+        "error": "key_coercion"
+      }
+    },
+    {
+      "name": "number for a string key",
+      "expr": "cell(q-rank, 1, score)",
+      "expect": {
+        "error": "key_coercion"
+      }
+    },
+    {
+      "name": "number for a boolean key",
+      "expr": "cell(q-flags, 1, n)",
+      "expect": {
+        "error": "key_coercion"
+      }
+    },
+    {
+      "name": "invalid date",
+      "expr": "cell(q-daily, \"2025-02-30\", visits)",
+      "expect": {
+        "error": "key_coercion"
+      }
+    },
+    {
+      "name": "non-ISO date",
+      "expr": "cell(q-daily, \"03/01/2025\", visits)",
+      "expect": {
+        "error": "key_coercion"
+      }
+    },
+    {
+      "name": "missing row",
+      "expr": "cell(q-rev-yoy, 2023, revenue)",
+      "expect": {
+        "error": "missing_row"
+      }
+    },
+    {
+      "name": "missing column",
+      "expr": "cell(q-rev-yoy, 2024, profit)",
+      "expect": {
+        "error": "missing_column"
+      }
+    },
+    {
+      "name": "column names are case-sensitive",
+      "expr": "cell(q-rev-yoy, 2024, Revenue)",
+      "expect": {
+        "error": "missing_column"
+      }
+    },
+    {
+      "name": "null cell in arithmetic",
+      "expr": "cell(q-seg-delta, \"Mid-market\", 2025, churn_rate)",
+      "expect": {
+        "error": "null_cell"
+      }
+    },
+    {
+      "name": "string cell in arithmetic",
+      "expr": "cell(q-seg-delta, \"SMB\", 2025, segment)",
+      "expect": {
+        "error": "non_numeric"
+      }
+    },
+    {
+      "name": "date cell in arithmetic",
+      "expr": "cell(q-total, as_of)",
+      "expect": {
+        "error": "non_numeric"
+      }
+    },
+    {
+      "name": "rank of a value not in the list",
+      "expr": "rank(5, 9, 7)",
+      "expect": {
+        "error": "rank_not_found"
+      }
+    }
+  ]
+}

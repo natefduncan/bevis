@@ -1,0 +1,41 @@
+{
+  "id": "q-rev-yoy",
+  "version": 1,
+  "source": "warehouse.orders",
+  "sql": "SELECT year, SUM(amount) AS revenue FROM orders WHERE refunded = false AND year IN (2024, 2025) GROUP BY year ORDER BY year;",
+  "params": {},
+  "run_at": "2026-10-20T14:01:47Z",
+  "provenance": "agent-reported",
+  "key": [
+    "year"
+  ],
+  "columns": [
+    {
+      "name": "year",
+      "type": "integer"
+    },
+    {
+      "name": "revenue",
+      "type": "decimal"
+    }
+  ],
+  "rows": [
+    [
+      2024,
+      "4210000"
+    ],
+    [
+      2025,
+      "3705000"
+    ]
+  ],
+  "row_count": 2,
+  "data_hash": "sha256:5b0e7f11dadc2b0864ec5b83f8acbd59690c7c68a932cd60d8a74f4ee9da4f31",
+  "assumptions": [
+    "revenue = SUM(amount), refunds excluded"
+  ],
+  "disclosure": {
+    "level": "full",
+    "withheld_rows": 0
+  }
+}
