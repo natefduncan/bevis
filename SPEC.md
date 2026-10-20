@@ -114,11 +114,14 @@ stale green checks).
 
 An evidence record is **immutable and versioned**.
 
-- Each run of a query creates a new record. Records are never edited.
+- Each submission is logged as a **run**. A run whose data differs from
+  the latest version creates a new version. Versions are never edited.
 - Evidence is identified by `id` (for example `q-rev-yoy`) and an integer
   `version`. A claim **pins** `(id, version)`.
-- Dedup: a run whose data hash equals the latest version's adds a "same
-  result" run entry, not a new version.
+- Dedup: a run whose data hash equals the latest version's is recorded
+  as a "same result" run against that version and does not create a new
+  version. If its SQL, source, or params differ from that version's, the
+  run entry flags it.
 - When a newer version exists, claims pinned to older versions are
   **stale**. An agent or editor re-points them. The host re-verifies the
   claim against the new data and shows the diff (changed cells, changed
@@ -242,8 +245,14 @@ column      := identifier | string
 identifier  := [A-Za-z_][A-Za-z0-9_]*
 key_value   := number | "-" number | string | "true" | "false" | "null"
 number      := [0-9]+ ("." [0-9]+)?           (no exponent, no separators)
-string      := '"' ( [^"\\] | '\"' | '\\' )* '"'
+string      := '"' ( strchar | escape )* '"'
+strchar     := any character except '"' and '\'
+escape      := '\' '"' | '\' '\'
 ```
+
+In the grammar, single quotes enclose one literal character. Inside a
+string, the only escapes are backslash-quote (a `"`) and
+backslash-backslash (a `\`). Any other backslash is a parse error.
 
 Lexical and parsing rules:
 
@@ -317,9 +326,13 @@ direction-checked. An author who wants a ratio checked writes it with
 
 The validator looks for a direction word in the same span:
 
-- **Down:** fell, dropped, declined, decreased, down, lower, shrank,
-  contracted.
-- **Up:** rose, grew, increased, up, higher, climbed, expanded.
+- **Down:** fell, dropped, declined, decreased, shrank, contracted.
+- **Up:** rose, grew, increased, climbed, expanded.
+
+Words match whole words, case-insensitively, and only in the forms
+listed. `up`, `down`, `higher`, and `lower` are deliberately excluded:
+they often appear in phrases that state no direction ("made up of",
+"higher-margin", "broken down by"), and a false match would be an error.
 
 Outcomes:
 
@@ -373,7 +386,19 @@ publish.
 | Image chart with figure-level evidence only | info |
 
 **Uncited numbers.** The validator scans text outside spans for numeric
-tokens. It ignores years, dates, list markers, and code. An author or
+tokens. It ignores:
+
+- **Years:** a bare integer of exactly four digits from 1900 to 2100,
+  with no separator, decimal point, `$`, `%`, or unit suffix.
+- **Dates:** ISO 8601 dates and datetimes, and a day or year number
+  directly next to a month name ("March 3", "3 March 2025").
+- **List markers:** a number at the start of a line followed by `.` or
+  `)`.
+- **Code:** anything inside inline code or a code block.
+
+A four-digit number used as a quantity ("2025 customers") is mistaken
+for a year and not flagged. Putting it in a claim span still checks it.
+An author or
 agent can mark a number **non-data** with a short reason. That clears the
 warning and is recorded in the activity log.
 
@@ -614,7 +639,7 @@ Layout:
 ## 11. Storage sketch (SQLite)
 
 `reports`, `versions`, `blocks`, `claims`, `claim_numbers`,
-`evidence`, `evidence_rows` (or JSON), `claim_evidence`,
+`evidence`, `evidence_rows` (or JSON), `evidence_runs`, `claim_evidence`,
 `activity`, `suggestions`, `challenges`, `comments`, `tokens`.
 
 Evidence rows are stored with typed values. Large result sets may move to
@@ -645,9 +670,9 @@ files with the hash in the record (decided later from real data).
   rows, cited rows only above that (§10.4).
 - ~~**O4. Row cap.**~~ Resolved: defaults of 10,000 rows and 5 MB per
   record, configurable on the host; `partial` flag for samples (§3.4).
-- ~~**O5. Chart mark keys.**~~ Resolved: strict. Specs may only apply
-  `filter`, `sort`, and `limit` transforms, so each mark maps to one
-  evidence row (§3.6).
+- ~~**O5. Chart mark keys.**~~ Resolved: strict, so each mark maps to
+  one evidence row. The set of allowed transforms was settled in O7
+  (§3.6).
 - ~~**O6. Evidence IDs.**~~ Resolved: agent-chosen slugs, unique per
   report, a slug is the identity of the evidence (§3.4).
 - ~~**O7. Chart transforms.**~~ Resolved: Vega-Lite has no `sort` or
