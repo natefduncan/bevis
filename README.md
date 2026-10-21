@@ -6,8 +6,9 @@ support it. See [SPEC.md](SPEC.md).
 
 ## Status
 
-Build steps 1 and 2 (SPEC §12): the bundle format, the expression
-language, the PDF renderer, and the validator.
+Build steps 1 to 3 (SPEC §12): the bundle format, the expression
+language, the PDF renderer, the validator, and the host (REST and MCP over
+one SQLite file).
 
 - `spec/bundle/`: JSON Schemas, integrity rules, value encodings, and the
   data hash for export bundles.
@@ -27,3 +28,28 @@ uv run bevis validate examples/revenue-review      # check claims against eviden
 uv run bevis export pdf examples/revenue-review    # writes examples/revenue-review/report.pdf
 uv run pytest
 ```
+
+## Running the host
+
+```sh
+export BEVIS_DATA_DIR=./bevis-data           # the SQLite file and PDF cache live here
+uv run bevis keys create claude-analyst      # prints an agent key once
+uv run bevis serve                           # REST at /api, MCP at /mcp
+```
+
+Or in a container, with the same commands inside it:
+
+```sh
+docker build -t bevis .
+docker run -d -p 8000:8000 -v bevis-data:/data --name bevis bevis
+docker exec bevis bevis keys create claude-analyst
+```
+
+An agent connects its MCP client to `http://localhost:8000/mcp/` with the
+header `Authorization: Bearer <agent key>`. Creating a report returns a
+one-time admin link for the report's human owner. The owner uses it to
+make share links (`POST /api/reports/{id}/links`) with a role, a
+disclosure level, and a version scope.
+
+Settings: `BEVIS_DATA_DIR`, `BEVIS_MAX_ROWS` (default 10000), and
+`BEVIS_MAX_BYTES` (default 5 MB) per evidence record.

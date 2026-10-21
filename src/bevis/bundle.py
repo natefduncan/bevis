@@ -37,7 +37,7 @@ def _validator(name: str) -> Draft202012Validator:
     return Draft202012Validator(schemas[name], registry=registry)
 
 
-def _schema_problems(doc: Any, schema: str, where: str) -> list[str]:
+def schema_problems(doc: Any, schema: str, where: str) -> list[str]:
     errors = sorted(_validator(schema).iter_errors(doc), key=lambda e: list(e.absolute_path))
     out = []
     for e in errors:
@@ -91,9 +91,9 @@ def load(root: str | Path) -> Bundle:
     manifest = _load_json(root / "manifest.json", problems)
     report = _load_json(root / "report.json", problems)
     if manifest is not None:
-        problems += _schema_problems(manifest, "manifest.schema.json", "manifest.json")
+        problems += schema_problems(manifest, "manifest.schema.json", "manifest.json")
     if report is not None:
-        problems += _schema_problems(report, "report.schema.json", "report.json")
+        problems += schema_problems(report, "report.schema.json", "report.json")
     if problems:
         raise BundleError(problems)
     assert manifest is not None and report is not None
@@ -114,9 +114,9 @@ def load(root: str | Path) -> Bundle:
         doc = _load_json(root / where, problems)
         if doc is None:
             continue
-        schema_problems = _schema_problems(doc, "evidence.schema.json", where)
-        if schema_problems:
-            problems += schema_problems
+        doc_problems = schema_problems(doc, "evidence.schema.json", where)
+        if doc_problems:
+            problems += doc_problems
             continue
         if (doc["id"], doc["version"]) != ident:
             problems.append(f"{where}: holds {doc['id']} v{doc['version']}")

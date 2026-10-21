@@ -6,7 +6,10 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.158.0",
     "jsonschema>=4.23",
+    "mcp>=2.3.0",
+    "uvicorn>=0.54.0",
     "vl-convert-python>=1.7",
 ]
 
@@ -14,7 +17,10 @@ dependencies = [
 bevis = "bevis.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8",
+]
 
 [build-system]
 requires = ["hatchling"]

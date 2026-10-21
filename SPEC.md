@@ -460,13 +460,35 @@ Token roles: `reader`, `commenter`, `suggester`, `editor`, `admin`.
 | Publish | | | | yes | yes |
 | Manage tokens, share links | | | | | yes |
 
-- Agents default to **suggester** on existing reports and **editor** on
-  reports they created.
+- **Credentials.** An **agent key** names an agent across the host. It is
+  created by the operator (`bevis keys create <name>`) and can create
+  reports. Its role is **editor** on reports it created and
+  **suggester** on all others. A **link** (§7) is a capability for one
+  report with a fixed role. Creating a report returns a one-time
+  **admin link** for its human owner, who manages the other links. The
+  host stores only SHA-256 hashes of secrets.
+- Suggesters see the live draft, because a suggestion is made against it.
+  Readers and commenters see published versions only.
+- **Edits are operations.** A direct edit and a suggestion are both a
+  list of operations, applied atomically: `set_title`, `upsert_block`,
+  `move_block`, `delete_block` (which removes its claims and non-data
+  markings), `link_claim`, `unlink_claim`, `repin` (moves claims and
+  charts to another version of one evidence id), `mark_non_data`, and
+  `unmark_non_data`. Every write validates the result and returns the
+  findings, plus each claim or number whose status or computed value
+  changed. An edit may carry `base_revision`, and it fails if the draft
+  has moved on since.
+- Block ids are host-assigned (`bN`) unless given. Claim ids are chosen
+  by the author, because the span `{#cN}` must name them; `get_report`
+  returns the next free ids.
 - A **suggestion** is one atomic bundle (text change, claim links, new
   evidence references). It is validated on submit and again on accept. The
   reviewer sees a diff and the validator results.
 - Suggestion diffs highlight claims whose evidence version or computed
   value changed.
+- Adding an evidence version re-validates the draft, since claims pinned
+  to the old version become stale. The response lists those claims and
+  charts and the diff from the previous version.
 
 ### 6.1 Activity log
 
@@ -486,7 +508,8 @@ accounts can be added later without changing the model.
 - The `tokens` table is designed so a token can later map to a user
   identity without changing the permission model.
 - Links target a **specific published version** or **"latest
-  published"**. Only editor and admin links see the live draft.
+  published"**. Only suggester, editor, and admin links see the live
+  draft.
 
 **Disclosure levels** (enforced on the server; withheld data is never
 sent to the browser):
@@ -522,11 +545,21 @@ Disclosure applies to the web view, API responses, and exports.
 
 ## 9. Agent interface
 
-One contract exposed as REST and MCP. Initial tools:
+One contract exposed as REST (`/api`) and MCP (`/mcp`, streamable HTTP).
+Both send `Authorization: Bearer <agent key or link>`. Tools:
 
-`create_report`, `get_report`, `add_evidence`, `upsert_block`,
-`link_claim`, `validate_report`, `suggest_edit`, `accept_edit`,
-`publish`, `add_comment`, `list_open_challenges`, `reply_to_challenge`.
+`create_report`, `list_reports`, `get_report`, `add_evidence`,
+`get_evidence`, `upsert_block`, `link_claim`, `edit_draft` (several
+operations at once), `validate_report` (validate or preview ops without
+storing), `suggest_edit`, `list_suggestions`, `accept_edit`,
+`reject_edit`, `publish`, `add_comment`, `list_comments`. Challenges add
+`list_open_challenges` and `reply_to_challenge` (build step 5).
+
+Errors are `{"error": {"code", "message", "details"}}`, with HTTP status
+401 (no or bad credential), 403 (role too low), 404 (unknown, or not
+visible to this credential), 409 (conflict: stale revision, validation
+errors at publish, slug exists with `create_only`), 413 (evidence too
+large), or 422 (malformed). Over MCP the same object is the tool error.
 
 Thin client libraries (Python first, R later) run a query and POST the
 result to `add_evidence`. They are conveniences only. The HTTP API is the
@@ -680,9 +713,15 @@ Layout:
 
 ## 11. Storage sketch (SQLite)
 
-`reports`, `versions`, `blocks`, `claims`, `claim_numbers`,
-`evidence`, `evidence_rows` (or JSON), `evidence_runs`, `claim_evidence`,
-`activity`, `suggestions`, `challenges`, `comments`, `tokens`.
+`reports` (holding the draft as one JSON document, with its revision and
+latest validation), `versions` (immutable snapshots), `evidence` (one row
+per version, rows as JSON), `evidence_runs`, `suggestions`, `comments`,
+`activity`, and `credentials` (agent keys and links). Challenges add a
+table in build step 5. The schema is in `src/bevis/host/db.py`.
+
+A report is small (dozens of blocks), and every edit validates the whole
+draft. So the draft is read and written whole, and history lives in the
+activity log and published versions.
 
 Evidence rows are stored with typed values. Large result sets may move to
 files with the hash in the record (decided later from real data).

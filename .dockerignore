@@ -1,0 +1,7 @@
+.git
+.venv
+bevis-data
+tests
+examples
+**/__pycache__
+**/*.pdf

@@ -11,6 +11,7 @@ import copy
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
+from functools import lru_cache
 from typing import Any
 
 from . import charts, expr, numbers
@@ -193,7 +194,9 @@ class _TextBuilder:
             out.append("\n")
 
 
+@lru_cache(maxsize=4096)
 def analyze_text(block_id: str, markdown: str) -> _Text:
+    """Cached: the host validates on every write, and most blocks are unchanged."""
     builder = _TextBuilder(block_id)
     outside = builder.build(pandoc_json(markdown)["blocks"])
     return _Text(outside, builder.spans)

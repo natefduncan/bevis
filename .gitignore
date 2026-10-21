@@ -221,3 +221,6 @@ __marimo__/
 
 # Derived bundle outputs
 examples/*/report.pdf
+
+# Host state from local runs
+bevis-data/
