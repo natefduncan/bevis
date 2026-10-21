@@ -1,0 +1,52 @@
+{
+  "description": "Number reading and matching for SPEC §4.1. See README.md.",
+  "written_numbers": [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+    "nineteen", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+    "hundred", "thousand", "million", "billion", "trillion", "dozen", "half"
+  ],
+  "tokens": [
+    { "text": "Revenue fell 12.0%, from $4.21M to $3.71M.", "tokens": ["12.0%", "$4.21M", "$3.71M"] },
+    { "text": "1,284 rows and 1,0000 more", "tokens": ["1,284", "1", "0000"] },
+    { "text": "-$1.2M and +3% and −12.0%", "tokens": ["-$1.2M", "+3%", "−12.0%"] },
+    { "text": "2024-2025 and Q3-4", "tokens": ["2024", "2025", "4"] },
+    { "text": "Q4 FY2025 v1 H1", "tokens": [] },
+    { "text": "the 3rd account at 10am, 4.2bn", "tokens": ["3rd", "10am", "4.2bn"] },
+    { "text": "5m users, 2B, 7k", "tokens": ["5m", "2B", "7k"] },
+    { "text": "version 1.2.3", "tokens": ["1.2"] },
+    { "text": "3+ years", "tokens": ["3"] },
+    { "text": "(12%)", "tokens": ["12%"] }
+  ],
+  "cases": [
+    { "display": "$4.21M", "value": "4210000", "match": true },
+    { "display": "$4.21M", "value": "4215000", "match": false },
+    { "display": "$4.21M", "value": "4214999.99", "match": true },
+    { "display": "$3.71M", "value": "3705000", "match": true, "note": "exact half rounds up" },
+    { "display": "$4.2M", "value": "4249999", "match": true },
+    { "display": "$4.2M", "value": "4250000", "match": false },
+    { "display": "12.0%", "value": "-0.1199524940617577197149643705463183", "match": true, "note": "no explicit sign: magnitude" },
+    { "display": "-12.0%", "value": "-0.11995", "match": true },
+    { "display": "+12.0%", "value": "-0.11995", "match": false },
+    { "display": "−12.0%", "value": "-0.11995", "match": true },
+    { "display": "-12.0%", "value": "0.11995", "match": false },
+    { "display": "-0.0%", "value": "0.0004", "match": true, "note": "zero matches either sign" },
+    { "display": "+0.0%", "value": "-0.0004", "match": true },
+    { "display": "12.5%", "value": "-0.125", "match": true },
+    { "display": "-12.5%", "value": "-0.12545", "match": true, "note": "half-up rounds away from zero" },
+    { "display": "1,284", "value": "1284", "match": true },
+    { "display": "1,284", "value": "1284.4", "match": true },
+    { "display": "1,284", "value": "1284.5", "match": false },
+    { "display": "$84.2K", "value": "-84210", "match": true },
+    { "display": "84.2k", "value": "84250", "match": false, "note": "84.25 rounds to 84.3" },
+    { "display": "2B", "value": "1500000000", "match": true },
+    { "display": "2b", "value": "2500000000", "match": false },
+    { "display": "0.5", "value": "0.45", "match": true },
+    { "display": "53%", "value": "0.5263157894736842105263157894736842", "match": true },
+    { "display": "54%", "value": "0.5445544554455445544554455445544554", "match": true },
+    { "display": "twelve percent", "value": "0.12", "match": null },
+    { "display": "3rd", "value": "3", "match": null },
+    { "display": "1.2.3", "value": "1.2", "match": null },
+    { "display": "$-1.2M", "value": "-1200000", "match": null }
+  ]
+}

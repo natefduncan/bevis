@@ -104,3 +104,51 @@ evaluates `expr` with every fixture pinned. `expect` is one of:
 - `{"error": "parse"}`: parsing fails.
 - `{"error": "<code>"}`: parsing succeeds and evaluation fails with that
   code.
+
+## Reading displayed numbers: `matching.json`
+
+A **numeric token** in text is read with this pattern (Python `re.X`
+syntax):
+
+```
+(?<![\w.])                         not glued to a word or a decimal point
+(?P<sign>[+\-−](?=\$?\d))?         explicit sign, before the number or its $
+(?P<cur>\$)?
+(?P<int>\d{1,3}(?:,\d{3})+|\d+)    thousands separators, or none
+(?P<frac>\.\d+)?
+(?!\d)
+(?P<suffix>%|[KkMmBb](?![A-Za-z]))?
+(?P<tail>[A-Za-z]+)?
+```
+
+- A token with a `tail` (`3rd`, `10am`, `4.2bn`) is a number but is not
+  parsed, so it cannot be matched.
+- `Q4`, `FY2025`, and `v1` are not tokens, because a letter comes right
+  before the digits.
+- A `-` right after a digit or a letter is a hyphen, not a sign. So
+  `2024-2025` holds two unsigned tokens.
+- A claim number's `text` must be exactly one token with no tail.
+
+**Matching** (SPEC §4.1) scales the value to the displayed unit: ×100 for
+`%`, ÷10³/10⁶/10⁹ for `K`/`M`/`B`. It then rounds **half-up, away from
+zero**, to the displayed decimals. Without an explicit sign, magnitudes are
+compared. With one, signed values are compared, and −0 equals 0.
+
+`matching.json` holds:
+
+- `tokens`: text, and the tokens read from it, in order.
+- `cases`: a displayed number, a value, and whether they match. `match: null`
+  means the display does not parse as a claim number.
+- `written_numbers`: words that produce the "written-out number" warning.
+  They match whole words, case-insensitively.
+
+## Direction words: `direction.json`
+
+`down` and `up` are the direction lexicon (SPEC §4.2). Words match whole
+words, case-insensitively, only in the listed forms.
+
+Each case is one claim span holding one number. `text` is the number as
+displayed, and `value` is its evaluated value. With `change: true` the
+number is a computed change, and with `change: false` it is a direct cell.
+`expect` lists the codes of every finding the validator reports for that
+span. An empty list means the span is clean.

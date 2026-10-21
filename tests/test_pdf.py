@@ -213,7 +213,8 @@ def test_cited_disclosure(example, tmp_path):
     top = section(text, "q-top-accounts v1", "q-churn v1")
     assert "Showing 3 of 40 rows (the rest are not disclosed at this level)." in top
     assert "Not disclosed at this level: account_name, segment, rev_2024, rev_2025." in top
-    assert "Blue Heron" not in top  # a cited row whose name column is withheld
+    table = section(top, "Result")
+    assert "A-1079" in table and "Blue Heron" not in table  # a cited row whose name is withheld
 
 
 # -- helpers ------------------------------------------------------------------

@@ -1,0 +1,26 @@
+{
+  "description": "Direction lexicon and cases for SPEC §4.2. Words match whole words, case-insensitively, in exactly these forms. See README.md.",
+  "down": ["fell", "dropped", "declined", "decreased", "shrank", "contracted"],
+  "up": ["rose", "grew", "increased", "climbed", "expanded"],
+  "cases": [
+    { "name": "down word, negative change", "span": "Revenue fell 12.0%", "text": "12.0%", "value": "-0.12", "change": true, "expect": [] },
+    { "name": "up word, positive change", "span": "Revenue grew 12.0%", "text": "12.0%", "value": "0.12", "change": true, "expect": [] },
+    { "name": "down word contradicts a positive change", "span": "Revenue fell 12.0%", "text": "12.0%", "value": "0.12", "change": true, "expect": ["direction.contradicts"] },
+    { "name": "up word contradicts a negative change", "span": "Costs rose $3K", "text": "$3K", "value": "-3000", "change": true, "expect": ["direction.contradicts"] },
+    { "name": "case-insensitive", "span": "FELL 12.0%", "text": "12.0%", "value": "-0.12", "change": true, "expect": [] },
+    { "name": "no word, no sign", "span": "Revenue changed 12.0%", "text": "12.0%", "value": "-0.12", "change": true, "expect": ["direction.unstated"] },
+    { "name": "explicit sign states direction", "span": "Revenue changed -12.0%", "text": "-12.0%", "value": "-0.12", "change": true, "expect": [] },
+    { "name": "unicode minus is an explicit sign", "span": "Revenue changed −12.0%", "text": "−12.0%", "value": "-0.12", "change": true, "expect": [] },
+    { "name": "wrong explicit sign", "span": "Revenue changed +12.0%", "text": "+12.0%", "value": "-0.11995", "change": true, "expect": ["number.sign_mismatch"] },
+    { "name": "word and sign both checked", "span": "Revenue fell −12.0%", "text": "−12.0%", "value": "-0.12", "change": true, "expect": [] },
+    { "name": "fell with a plus sign fails the sign check", "span": "Revenue fell +12.0%", "text": "+12.0%", "value": "-0.12", "change": true, "expect": ["number.sign_mismatch"] },
+    { "name": "both lists: not checked", "span": "Revenue fell 12.0% while costs rose", "text": "12.0%", "value": "0.12", "change": true, "expect": ["direction.ambiguous"] },
+    { "name": "zero change is not checked", "span": "Revenue fell 0.0%", "text": "0.0%", "value": "0", "change": true, "expect": [] },
+    { "name": "direct numbers are not checked", "span": "Revenue fell to $3.7M", "text": "$3.7M", "value": "3700000", "change": false, "expect": [] },
+    { "name": "non-change computed numbers are not checked", "span": "a share of 53%", "text": "53%", "value": "0.53", "change": false, "expect": [] },
+    { "name": "excluded word: down", "span": "Revenue was down 12.0%", "text": "12.0%", "value": "0.12", "change": true, "expect": ["direction.unstated"] },
+    { "name": "excluded word: higher", "span": "higher-margin revenue grew 12.0%", "text": "12.0%", "value": "0.12", "change": true, "expect": [] },
+    { "name": "unlisted form: falling", "span": "Revenue is falling 12.0%", "text": "12.0%", "value": "0.12", "change": true, "expect": ["direction.unstated"] },
+    { "name": "whole words only", "span": "Refell 12.0%", "text": "12.0%", "value": "0.12", "change": true, "expect": ["direction.unstated"] }
+  ]
+}

@@ -21,15 +21,13 @@ from typing import Any
 from .bundle import Bundle, resolve_direct
 from .cited import Citations, citations
 from .evidence import Record
+from .markdown import AUTHOR_FORMAT, pandoc_json, stringify
+from .markdown import str_node as _str
 from .values import Value
 
 FULL_TABLE_ROWS = 25  # tables up to this many rows are shown in full
 MAX_COLUMNS = 7  # page-width limit for a full table
 
-AUTHOR_FORMAT = (
-    "markdown-raw_tex-raw_html-raw_attribute-yaml_metadata_block-pandoc_title_block"
-    "-implicit_figures-tex_math_dollars-tex_math_single_backslash-tex_math_double_backslash"
-)
 GENERATED_FORMAT = "markdown-implicit_figures-tex_math_dollars-raw_tex-raw_html-raw_attribute"
 
 LATEX_HEADER = r"""
@@ -98,40 +96,6 @@ def direct_ref(cell: dict) -> str:
 
 
 # -- Pandoc AST ---------------------------------------------------------------
-
-
-def pandoc_json(markdown: str, fmt: str) -> dict:
-    proc = subprocess.run(
-        ["pandoc", "-f", fmt, "-t", "json"],
-        input=markdown,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise RenderError(f"pandoc could not parse Markdown: {proc.stderr.strip()}")
-    return json.loads(proc.stdout)
-
-
-def _str(text: str) -> dict:
-    return {"t": "Str", "c": text}
-
-
-def stringify(node: Any) -> str:
-    if isinstance(node, list):
-        return "".join(stringify(n) for n in node)
-    if not isinstance(node, dict):
-        return ""
-    t = node.get("t")
-    if t == "Str":
-        return node["c"]
-    if t in ("Space", "SoftBreak", "LineBreak"):
-        return " "
-    if t == "Code":
-        return node["c"][1]
-    if t == "Quoted":
-        q = "“”" if node["c"][0]["t"] == "DoubleQuote" else "‘’"
-        return q[0] + stringify(node["c"][1]) + q[1]
-    return stringify(node.get("c"))
 
 
 class _AuthorText:

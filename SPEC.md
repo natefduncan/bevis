@@ -306,10 +306,13 @@ The validator parses the number as displayed and its precision, then
 compares to the evaluated value:
 
 - Parsed forms: thousands separators, `$`, `%`, suffixes `K` `M` `B`
-  (case-insensitive), and negatives written with `-` or `−`.
+  (case-insensitive), and negatives written with `-` or `−`. The exact
+  token pattern is in `spec/expr/README.md`, with cases in
+  `spec/expr/matching.json`.
 - Compare `round_half_up(value scaled to the displayed unit, displayed
   decimals)` to the displayed number. `$4.21M` matches 4,210,000 and does
-  not match 4,215,000. Rounding is half-up and fixed (not configurable).
+  not match 4,215,000. Rounding is half-up (away from zero) and fixed
+  (not configurable).
   A less precise display is a weaker claim: `$4.2M` accepts any value
   that rounds to 4.2 in millions.
 - Percentages: the value is multiplied by 100 before comparison.
@@ -372,44 +375,71 @@ Outcomes:
 Runs on every write, on suggestion submit, on suggestion accept, and at
 publish.
 
-| Rule | Severity |
-|---|---|
-| Claim has no evidence reference | error |
-| Span without claim row, or claim without span | error |
-| `direct`/`computed` number does not match at displayed precision | error |
-| Expression fails to parse or evaluate | error |
-| Cited cell does not exist in the pinned version | error |
-| Chart data is not a reference to cited evidence | error |
-| Chart uses a disallowed transform or encoding property (§3.6) | error |
-| Claim or chart pins two versions of the same evidence id | error |
-| Key value count does not match key arity, or cannot be coerced | error |
-| Explicit sign does not match the sign of the evaluated value | error |
-| Evidence key is not unique, or hash mismatch | error (rejects write) |
-| Claim pinned to a stale evidence version | warning |
-| Claim tier is `asserted` | info (amber in audit mode) |
-| Direction word contradicts the sign of a computed change | error |
-| Computed change with no direction word and no explicit sign | warning |
-| Span holds both up and down words (direction not checked) | info |
-| Number in block text outside any span | warning |
-| Written-out number in a span | warning |
-| Image chart with figure-level evidence only | info |
+Each rule has a stable code, used in findings and in the shared test
+cases.
+
+| Rule | Code | Severity |
+|---|---|---|
+| Claim has no evidence reference | `claim.no_evidence` | error |
+| Span without claim row | `span.no_claim` | error |
+| Claim without span, or with its span in another block | `claim.no_span`, `claim.wrong_block` | error |
+| Claim span repeated, or inside another claim span | `span.duplicate`, `span.nested` | error |
+| Claim number's text does not appear in its span | `number.not_in_span` | error |
+| Number in a span that the claim does not cover | `span.uncovered_number` | error |
+| Number in a span that cannot be parsed ("3rd", "4.2bn") | `span.unparsed_number` | warning |
+| Claim number's text is not a readable number | `number.unparseable` | error |
+| `direct`/`computed` number does not match at displayed precision | `number.mismatch` | error |
+| Cited cell is null or not numeric | `number.non_numeric` | error |
+| Expression fails to parse | `expr.parse` | error |
+| Expression fails to evaluate, or cited cell does not exist in the pinned version, or key count/coercion fails | `eval.<code>` (codes in `spec/expr/README.md`) | error |
+| Cited rows are withheld at this disclosure level | `eval.withheld` | info (unverified) |
+| Chart data is not a reference to cited evidence, or loads anything external | `chart.data` | error |
+| Chart uses a disallowed transform or encoding property (§3.6) | `chart.transform`, `chart.encoding` | error |
+| Chart spec exceeds the size cap (64 KB) | `chart.size` | error |
+| Pin to an evidence version that does not exist | `pin.unknown` | error |
+| `direct` cell cites a version the claim does not pin | `pin.unpinned_cell` | error |
+| Claim or chart pins two versions of the same evidence id | `pin.two_versions` | error |
+| Explicit sign does not match the sign of the evaluated value | `number.sign_mismatch` | error |
+| Evidence key is not unique, or hash mismatch | (bundle/write rejected) | error (rejects write) |
+| Claim pinned to a stale evidence version | `pin.stale` | warning |
+| Number tier is `asserted`, or claim states no numbers | `number.asserted`, `claim.asserted` | info (amber in audit mode) |
+| Direction word contradicts the sign of a computed change | `direction.contradicts` | error |
+| Computed change with no direction word and no explicit sign | `direction.unstated` | warning |
+| Span holds both up and down words (direction not checked) | `direction.ambiguous` | info |
+| Number in block text outside any span | `text.uncited_number` | warning |
+| Written-out number in a span | `text.written_number` | warning |
+| Image chart with figure-level evidence only | `image.figure_level` | info |
+
+**Statuses.** A number's status is the worst of its findings: `error`,
+`warning`, `unverified` (from `number.asserted` or `eval.withheld`), or
+`ok`. A claim's status is the worst of its numbers and its claim-level
+findings, and `claim.asserted` makes it `unverified`.
+
+**Numbers in spans.** Every number in a span is covered by one of the
+claim's numbers. Each claim number consumes one occurrence of its exact
+text, and an uncovered number is an error, since a span's evidence must
+support all of its numbers (§3.2). Years and dates in a span, by the same
+rules as below, need no covering number. A claim number whose text is a
+year is checked like any other.
 
 **Uncited numbers.** The validator scans text outside spans for numeric
-tokens. It ignores:
+tokens: block text, heading text, and chart and image captions. It ignores:
 
 - **Years:** a bare integer of exactly four digits from 1900 to 2100,
   with no separator, decimal point, `$`, `%`, or unit suffix.
-- **Dates:** ISO 8601 dates and datetimes, and a day or year number
-  directly next to a month name ("March 3", "3 March 2025").
+- **Dates:** ISO 8601 dates and datetimes, and a day (1 to 31) or year
+  number directly next to a capitalized month name or its abbreviation
+  ("March 3", "3 March 2025", "Sept. 14").
 - **List markers:** a number at the start of a line followed by `.` or
   `)`.
 - **Code:** anything inside inline code or a code block.
 
 A four-digit number used as a quantity ("2025 customers") is mistaken
-for a year and not flagged. Putting it in a claim span still checks it.
-An author or
-agent can mark a number **non-data** with a short reason. That clears the
-warning and is recorded in the activity log.
+for a year and not flagged. Listing it as a claim number still checks it.
+An author or agent can mark a number **non-data** with a short reason
+(`non_data` in `report.json`: block, exact token text, reason). That
+clears the warning for that token in that block and is recorded in the
+activity log.
 
 Accepting a suggestion that leaves a claim failing validation is allowed
 (a human may override). The claim shows red in audit mode.

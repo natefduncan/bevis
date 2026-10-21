@@ -6,18 +6,16 @@ import json
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
+from . import charts
+from ._spec import spec_dir
 from .evidence import EvidenceError, LookupFailed, Record
 
-# Wheels carry the schemas inside the package; a source checkout reads spec/.
-_HERE = Path(__file__).resolve().parent
-SCHEMA_DIR = next(
-    p for p in (_HERE / "spec" / "bundle", _HERE.parents[1] / "spec" / "bundle") if p.is_dir()
-)
+SCHEMA_DIR = spec_dir("bundle")
 
 
 class BundleError(Exception):
@@ -82,38 +80,6 @@ def _load_json(path: Path, problems: list[str]) -> Any:
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         problems.append(f"{path.name}: not valid JSON ({e})")
     return None
-
-
-def _chart_data(spec: Any, path: str = "spec") -> Iterator[tuple[str, Any]]:
-    """Every `data` value in a Vega-Lite spec, with its location."""
-    if isinstance(spec, dict):
-        for k, v in spec.items():
-            if k == "data":
-                yield f"{path}.data", v
-            else:
-                yield from _chart_data(v, f"{path}.{k}")
-    elif isinstance(spec, list):
-        for i, v in enumerate(spec):
-            yield from _chart_data(v, f"{path}[{i}]")
-
-
-def _chart_fetches(spec: Any, path: str = "spec") -> Iterator[str]:
-    """Places a spec could make the renderer fetch something.
-
-    vl-convert blocks data URLs when told to, but it still loads image marks,
-    so the reader refuses them here.
-    """
-    if isinstance(spec, dict):
-        for k, v in spec.items():
-            if k == "url":
-                yield f"{path}.url"
-            elif k == "mark" and (v == "image" or (isinstance(v, dict) and v.get("type") == "image")):
-                yield f"{path}.mark (image marks load external files)"
-            else:
-                yield from _chart_fetches(v, f"{path}.{k}")
-    elif isinstance(spec, list):
-        for i, v in enumerate(spec):
-            yield from _chart_fetches(v, f"{path}[{i}]")
 
 
 def load(root: str | Path) -> Bundle:
@@ -189,22 +155,8 @@ def load(root: str | Path) -> Bundle:
         if block["type"] in ("chart", "image"):
             check_pins(block["evidence"], where)
         if block["type"] == "chart":
-            if "datasets" in block["spec"]:
-                problems.append(f"{where}: chart specs may not set datasets")
-            for loc in _chart_fetches(block["spec"]):
-                problems.append(f"{where}: {loc} is not allowed; charts draw only from evidence")
-            pinned = {(p["id"], p["version"]) for p in block["evidence"]}
-            found = False
-            for loc, data in _chart_data(block["spec"]):
-                ref = data.get("evidence") if isinstance(data, dict) and set(data) == {"evidence"} else None
-                if not isinstance(ref, dict) or set(ref) != {"id", "version"}:
-                    problems.append(f"{where}: {loc} must be {{\"evidence\": {{\"id\", \"version\"}}}}")
-                    continue
-                found = True
-                if (ref["id"], ref["version"]) not in pinned:
-                    problems.append(f"{where}: {loc} uses {ref['id']} v{ref['version']}, which the block does not pin")
-            if not found:
-                problems.append(f"{where}: chart has no evidence data")
+            for problem in charts.data_problems(block["spec"], block["evidence"]):
+                problems.append(f"{where}: {problem}")
         if block["type"] == "image":
             src = (root / block["src"]).resolve()
             if not src.is_relative_to((root / "assets").resolve()) or not src.is_file():

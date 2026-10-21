@@ -1,8 +1,9 @@
 """Write the example bundle in examples/revenue-review/.
 
 This plays the part of an agent: it holds query results, writes claims
-over them, and lets bevis compute the hashes. Run it after changing the
-example or the hash rules:
+over them, and lets bevis compute the hashes. Statuses, computed values,
+and the manifest's validation counts are filled in by the validator, as
+the host does at publish. Run it after changing the example or the rules:
 
     uv run python examples/build_revenue_review.py
 """
@@ -12,7 +13,9 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from bevis import bundle
 from bevis.evidence import Record
+from bevis.validate import Subject, validate
 
 OUT = Path(__file__).parent / "revenue-review"
 RUN_AT = "2026-10-20T14:01:47Z"
@@ -220,7 +223,7 @@ blocks = [
     {"id": "b6", "type": "heading", "level": 2, "text": "Accounts behind the decline"},
     {"id": "b7", "type": "text", "text": (
         "[The largest single decline was Northwind Traders, down $84.2K]{#c6}, and "
-        "[the three largest declines together came to $201K]{#c7}. "
+        "[with Blue Heron Supply and Cedar Logistics, the largest declines came to $201K]{#c7}. "
         "[The decline is concentrated in accounts that renewed onto the new pricing tier]{#c5}."
     )},
     {"id": "b8", "type": "chart", "caption": "Monthly revenue",
@@ -293,7 +296,7 @@ manifest = {
         "override": None,
     },
     "disclosure": "full",
-    "validation": {"errors": 0, "warnings": 0, "info": 1},
+    "validation": {"errors": 0, "warnings": 0, "info": 0},  # set by the validator
     "evidence": [
         {"id": d["id"], "version": d["version"], "file": f"evidence/{d['id']}.v{d['version']}.json"}
         for d in RECORDS
@@ -311,4 +314,12 @@ if __name__ == "__main__":
     write(OUT / "report.json", {"blocks": blocks, "claims": claims, "non_data": []})
     for d in RECORDS:
         write(OUT / f"evidence/{d['id']}.v{d['version']}.json", d)
+
+    b = bundle.load(OUT)
+    result = validate(Subject.from_bundle(b))
+    write(OUT / "report.json", result.apply(b.report))
+    manifest["validation"] = result.counts()
+    write(OUT / "manifest.json", manifest)
+    for f in result.findings:
+        print(f"{f.severity}: {f.code} {f.where()}: {f.message}")
     print(f"wrote {OUT}")
