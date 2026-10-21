@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE reports (
@@ -119,6 +119,42 @@ CREATE INDEX comments_report ON comments (report_id, created_at);
 CREATE INDEX credentials_report ON credentials (report_id);
 """
 
+# Each migration takes the schema from version N to N + 1 (index N - 1).
+MIGRATIONS = [
+    # 1 -> 2: challenges (SPEC §8)
+    """
+    CREATE TABLE challenges (
+        id               TEXT PRIMARY KEY,
+        report_id        TEXT NOT NULL REFERENCES reports(id),
+        version          INTEGER NOT NULL,       -- the published version it was filed against
+        target           TEXT NOT NULL,          -- {"claim": id} | {"block": id}
+        cells            TEXT NOT NULL,          -- highlighted cells [{evidence, version, key, column}]
+        body             TEXT NOT NULL,
+        status           TEXT NOT NULL,          -- open | answered | resolved | dismissed
+        author           TEXT NOT NULL,
+        credential_id    TEXT NOT NULL,          -- who filed it, so the filer can reopen it
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL
+    );
+
+    CREATE TABLE challenge_events (
+        seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+        challenge_id     TEXT NOT NULL REFERENCES challenges(id),
+        kind             TEXT NOT NULL,          -- reply | status
+        author           TEXT NOT NULL,
+        credential_id    TEXT NOT NULL,
+        body             TEXT,
+        suggestion_id    TEXT,                   -- a reply that proposes an edit
+        from_status      TEXT,
+        to_status        TEXT,
+        created_at       TEXT NOT NULL
+    );
+
+    CREATE INDEX challenges_report ON challenges (report_id, status);
+    CREATE INDEX challenge_events_challenge ON challenge_events (challenge_id, seq);
+    """,
+]
+
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -142,11 +178,14 @@ class Database:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise RuntimeError(f"{path}: schema version {version} is newer than this host ({SCHEMA_VERSION})")
             if version == 0:
                 conn.executescript(SCHEMA)
-                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            elif version != SCHEMA_VERSION:
-                raise RuntimeError(f"{path}: schema version {version}, expected {SCHEMA_VERSION}")
+                version = 1
+            for n in range(version, SCHEMA_VERSION):
+                # executescript commits first, so each step sets user_version in the same script.
+                conn.executescript(f"BEGIN; {MIGRATIONS[n - 1]} PRAGMA user_version={n + 1}; COMMIT;")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)

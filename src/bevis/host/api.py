@@ -85,6 +85,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def healthz() -> dict:
         return {"ok": True}
 
+    @app.get("/api/me")
+    def me(p: Principal = P) -> dict:
+        return service.me(p)
+
     # reports
 
     @app.post("/api/reports", status_code=201)
@@ -166,7 +170,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/reports/{rid}/comments", status_code=201)
     def add_comment(rid: str, p: Principal = P, body: dict = Body(...)) -> dict:
-        return service.add_comment(p, rid, body.get("body"), body.get("target"), body.get("version"))
+        return service.add_comment(p, rid, body.get("body"), body.get("target"), body.get("version"),
+                                   body.get("display_name"))
+
+    # challenges
+
+    @app.post("/api/reports/{rid}/challenges", status_code=201)
+    def file_challenge(rid: str, p: Principal = P, body: dict = Body(...)) -> dict:
+        return service.file_challenge(p, rid, body.get("target"), body.get("body"), body.get("cells"),
+                                      body.get("version"), body.get("display_name"))
+
+    @app.get("/api/reports/{rid}/challenges")
+    def list_challenges(rid: str, status: str | None = None, version: int | None = None,
+                        p: Principal = P) -> list[dict]:
+        return service.list_challenges(p, rid, status, version)
+
+    @app.get("/api/reports/{rid}/challenges/{cid}")
+    def get_challenge(rid: str, cid: str, p: Principal = P) -> dict:
+        return service.get_challenge(p, rid, cid)
+
+    @app.post("/api/reports/{rid}/challenges/{cid}/replies", status_code=201)
+    def reply_to_challenge(rid: str, cid: str, p: Principal = P, body: dict = Body(...)) -> dict:
+        return service.reply_to_challenge(p, rid, cid, body.get("body"), body.get("ops"), body.get("message", ""),
+                                          body.get("display_name"))
+
+    @app.post("/api/reports/{rid}/challenges/{cid}/status")
+    def set_challenge_status(rid: str, cid: str, p: Principal = P, body: dict = Body(...)) -> dict:
+        return service.set_challenge_status(p, rid, cid, body.get("status"), body.get("note", ""),
+                                            body.get("display_name"))
+
+    @app.get("/api/challenges/open")
+    def list_open_challenges(report_id: str | None = None, p: Principal = P) -> list[dict]:
+        return service.list_open_challenges(p, report_id)
 
     @app.get("/api/reports/{rid}/comments")
     def list_comments(rid: str, p: Principal = P) -> list[dict]:

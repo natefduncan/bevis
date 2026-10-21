@@ -6,9 +6,10 @@ support it. See [SPEC.md](SPEC.md).
 
 ## Status
 
-Build steps 1 to 4 (SPEC §12): the bundle format, the expression
+Build steps 1 to 5 (SPEC §12): the bundle format, the expression
 language, the PDF renderer, the validator, the host (REST and MCP over
-one SQLite file), and the web view.
+one SQLite file), the web view, and sharing (share links, disclosure
+levels, and challenges).
 
 - `spec/bundle/`: JSON Schemas, integrity rules, value encodings, and the
   data hash for export bundles.

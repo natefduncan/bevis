@@ -239,6 +239,13 @@ class Service:
             "note": "admin_link is shown once; give it to the report's owner. It manages share links.",
         }
 
+    def me(self, p: Principal) -> dict:
+        """Who the caller is. Never includes the secret."""
+        out = {"kind": p.kind, "name": p.name, "author_kind": p.author_kind, "disclosure": p.disclosure}
+        if p.kind == "link":
+            out.update(report_id=p.report_id, role=p.role, scope=p.scope)
+        return out
+
     def list_reports(self, p: Principal) -> list[dict]:
         with self.db.read() as conn:
             if p.kind == "link":
@@ -701,7 +708,7 @@ class Service:
     # -- comments and activity ------------------------------------------------------------
 
     def add_comment(self, p: Principal, rid: str, body: str, target: dict | None = None,
-                    version: int | None = None) -> dict:
+                    version: int | None = None, display_name: str | None = None) -> dict:
         if not isinstance(body, str) or not body.strip():
             raise HostError(422, "invalid", "a comment needs a body")
         target = target or {}
@@ -714,11 +721,12 @@ class Service:
                 version = self._visible_version(conn, p, rid, version)
             elif version is not None:
                 version = self._visible_version(conn, p, rid, version)
+            author = _author(p, display_name)
             conn.execute(
                 "INSERT INTO comments VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (cid, rid, dumps(target), version, body, dumps(p.author()), now()),
+                (cid, rid, dumps(target), version, body, dumps(author), now()),
             )
-            self._log(conn, rid, p.author(), "comment", None,
+            self._log(conn, rid, author, "comment", None,
                       {"id": cid, "target": target, "version": version, "body": body})
         return {"id": cid, "target": target, "version": version}
 
@@ -746,6 +754,188 @@ class Service:
              "after": loads(r["after"]), "timestamp": r["timestamp"]}
             for r in rows
         ]
+
+    # -- challenges (SPEC §8) ------------------------------------------------------------
+
+    def file_challenge(self, p: Principal, rid: str, target: dict, body: str, cells: list | None = None,
+                       version: int | None = None, display_name: str | None = None) -> dict:
+        """Challenge a claim or block of a published version (commenter and up)."""
+        if not isinstance(body, str) or not body.strip():
+            raise HostError(422, "invalid", "a challenge needs text saying what is in doubt")
+        cells = cells or []
+        if not isinstance(cells, list) or len(cells) > 50:
+            raise HostError(422, "invalid", "cells is a list of at most 50 cells")
+        cid = new_id("chl")
+        with self.db.write() as conn:
+            self._report_row(conn, p, rid, "commenter")
+            number = self._visible_version(conn, p, rid, version)
+            content = self._version_content(conn, rid, number)
+            _check_target(content, target)
+            visible = self._visible_records(conn, rid, content, p.disclosure)
+            clean_cells = [_check_cell(c, visible) for c in cells]
+            author = _author(p, display_name)
+            stamp = now()
+            conn.execute(
+                "INSERT INTO challenges VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)",
+                (cid, rid, number, dumps(target), dumps(clean_cells), body, dumps(author), p.credential_id,
+                 stamp, stamp),
+            )
+            self._log(conn, rid, author, "file_challenge", None,
+                      {"id": cid, "version": number, "target": target, "cells": clean_cells, "body": body})
+        return self.get_challenge(p, rid, cid)
+
+    def list_challenges(self, p: Principal, rid: str, status: str | None = None,
+                        version: int | None = None) -> list[dict]:
+        """Challenges as seen from one version. Earlier ones whose target is still there are carried over."""
+        with self.db.read() as conn:
+            role = self._challenge_reader(conn, p, rid)
+            viewing = None
+            if not p.sees_draft() or version is not None:
+                viewing = self._visible_version(conn, p, rid, version)
+            q = "SELECT * FROM challenges WHERE report_id = ?" + (" AND status = ?" if status else "")
+            rows = conn.execute(q + " ORDER BY created_at", (rid, status) if status else (rid,)).fetchall()
+            return [c for c in (self._challenge(conn, p, role, r, viewing) for r in rows) if c is not None]
+
+    def get_challenge(self, p: Principal, rid: str, cid: str) -> dict:
+        with self.db.read() as conn:
+            role = self._challenge_reader(conn, p, rid)
+            row = conn.execute("SELECT * FROM challenges WHERE id = ? AND report_id = ?", (cid, rid)).fetchone()
+            viewing = None if p.sees_draft() else self._visible_version(conn, p, rid, None)
+            out = self._challenge(conn, p, role, row, viewing) if row else None
+        if out is None:
+            raise _not_found(f"challenge {cid}")
+        return out
+
+    def list_open_challenges(self, p: Principal, rid: str | None = None) -> list[dict]:
+        """Open challenges on one report, or on every report this caller can see (pull, SPEC §8)."""
+        rids = [rid] if rid else [r["id"] for r in self.list_reports(p)]
+        out = []
+        for r in rids:
+            try:
+                out += [{"report_id": r, **c} for c in self.list_challenges(p, r, status="open")]
+            except HostError as e:
+                if rid or e.status not in (403, 404):
+                    raise
+        return out
+
+    def reply_to_challenge(self, p: Principal, rid: str, cid: str, body: str, ops: list | None = None,
+                           message: str = "", display_name: str | None = None) -> dict:
+        """Answer with a comment, or with a suggestion that goes through review (SPEC §6)."""
+        if not isinstance(body, str) or not body.strip():
+            raise HostError(422, "invalid", "a reply needs text")
+        with self.db.read() as conn:
+            role = self._challenge_reader(conn, p, rid)
+            row = conn.execute("SELECT * FROM challenges WHERE id = ? AND report_id = ?", (cid, rid)).fetchone()
+        if row is None:
+            raise _not_found(f"challenge {cid}")
+        if row["status"] not in ("open", "answered"):
+            raise HostError(409, "closed", f"challenge {cid} is {row['status']}; reopen it to reply")
+        suggestion_id = None
+        if ops:
+            if RANK[role] < RANK["suggester"]:
+                raise HostError(403, "forbidden", "proposing an edit needs the suggester role")
+            suggestion_id = self.suggest(p, rid, ops, message or f"In reply to challenge {cid}")["id"]
+        author = _author(p, display_name)
+        with self.db.write() as conn:
+            row = conn.execute("SELECT * FROM challenges WHERE id = ?", (cid,)).fetchone()
+            filer = row["credential_id"] == p.credential_id
+            new_status = row["status"]
+            if row["status"] == "open" and not filer:
+                new_status = "answered"
+            elif row["status"] == "answered" and filer:
+                new_status = "open"  # the challenger is not satisfied yet
+            stamp = now()
+            conn.execute(
+                "INSERT INTO challenge_events (challenge_id, kind, author, credential_id, body, suggestion_id,"
+                " from_status, to_status, created_at) VALUES (?, 'reply', ?, ?, ?, ?, ?, ?, ?)",
+                (cid, dumps(author), p.credential_id, body, suggestion_id, row["status"], new_status, stamp),
+            )
+            conn.execute("UPDATE challenges SET status = ?, updated_at = ? WHERE id = ?", (new_status, stamp, cid))
+            self._log(conn, rid, author, "reply_to_challenge", None,
+                      {"id": cid, "body": body, "suggestion": suggestion_id, "status": new_status})
+        return self.get_challenge(p, rid, cid)
+
+    def set_challenge_status(self, p: Principal, rid: str, cid: str, status: str, note: str = "",
+                             display_name: str | None = None) -> dict:
+        """resolve (a human commenter and up), dismiss (a human editor and up), or reopen (the filer, or a
+        human editor and up)."""
+        if status not in ("resolved", "dismissed", "open"):
+            raise HostError(422, "invalid", "status is resolved, dismissed, or open (reopen)")
+        author = _author(p, display_name)
+        with self.db.write() as conn:
+            role = self._challenge_reader(conn, p, rid)
+            row = conn.execute("SELECT * FROM challenges WHERE id = ? AND report_id = ?", (cid, rid)).fetchone()
+            if row is None:
+                raise _not_found(f"challenge {cid}")
+            allowed = _challenge_permissions(p, role, row)
+            action = {"resolved": "resolve", "dismissed": "dismiss", "open": "reopen"}[status]
+            if not allowed[f"can_{action}"]:
+                raise HostError(403, "forbidden", _why_not(action, p, row))
+            stamp = now()
+            conn.execute(
+                "INSERT INTO challenge_events (challenge_id, kind, author, credential_id, body, from_status,"
+                " to_status, created_at) VALUES (?, 'status', ?, ?, ?, ?, ?, ?)",
+                (cid, dumps(author), p.credential_id, note or None, row["status"], status, stamp),
+            )
+            conn.execute("UPDATE challenges SET status = ?, updated_at = ? WHERE id = ?", (status, stamp, cid))
+            self._log(conn, rid, author, f"{action}_challenge", {"status": row["status"]},
+                      {"id": cid, "status": status, "note": note})
+        return self.get_challenge(p, rid, cid)
+
+    def _challenge_reader(self, conn: sqlite3.Connection, p: Principal, rid: str) -> str:
+        """Challenges are for the people in the discussion: commenters and up, and agents."""
+        _, role = self._report_row(conn, p, rid, "reader")
+        if RANK[role] < RANK["commenter"]:
+            raise HostError(403, "forbidden", "challenges are visible to commenters and up")
+        return role
+
+    def _version_content(self, conn: sqlite3.Connection, rid: str, number: int) -> dict:
+        return loads(conn.execute("SELECT content FROM versions WHERE report_id = ? AND number = ?",
+                                  (rid, number)).fetchone()["content"])
+
+    def _visible_records(self, conn: sqlite3.Connection, rid: str, content: dict, level: str) -> dict:
+        """Evidence of a version as this disclosure level shows it, as Records."""
+        docs = restrict(content, self._docs(conn, rid, content), level)
+        return {ident: Record.from_json(doc) for ident, doc in docs.items()}
+
+    def _challenge(self, conn: sqlite3.Connection, p: Principal, role: str, row: sqlite3.Row,
+                   viewing: int | None) -> dict | None:
+        target = loads(row["target"])
+        out = {
+            "id": row["id"],
+            "version": row["version"],
+            "target": target,
+            "body": row["body"],
+            "status": row["status"],
+            "author": loads(row["author"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "mine": row["credential_id"] == p.credential_id,
+        }
+        if viewing is not None:
+            if row["version"] > viewing:
+                return None
+            if row["version"] < viewing:
+                then = _target_in(self._version_content(conn, row["report_id"], row["version"]), target)
+                now_ = _target_in(self._version_content(conn, row["report_id"], viewing), target)
+                if now_ is None:
+                    return None  # the challenged claim or block is gone from this version
+                out["carried_over"] = True
+                out["target_changed"] = _strip_statuses(then or {}) != _strip_statuses(now_)
+        # Highlighted cells are shown only where this caller's disclosure level shows them.
+        cells = loads(row["cells"])
+        if cells and p.disclosure != "full":
+            content = self._version_content(conn, row["report_id"], row["version"])
+            visible = self._visible_records(conn, row["report_id"], content, p.disclosure)
+            cells = [c for c in cells if _cell_visible(c, visible)]
+        out["cells"] = cells
+        out["thread"] = [
+            {"kind": e["kind"], "author": loads(e["author"]), "body": e["body"], "suggestion_id": e["suggestion_id"],
+             "from_status": e["from_status"], "to_status": e["to_status"], "created_at": e["created_at"]}
+            for e in conn.execute("SELECT * FROM challenge_events WHERE challenge_id = ? ORDER BY seq", (row["id"],))
+        ]
+        out.update(_challenge_permissions(p, role, row))
+        return out
 
     # -- share links ------------------------------------------------------------------------
 
@@ -795,9 +985,11 @@ class Service:
             rows = conn.execute(
                 "SELECT id, name, author_kind, role, disclosure, scope, expires_at, revoked_at, created_at"
                 " FROM credentials WHERE report_id = ? ORDER BY created_at", (rid,)).fetchall()
-        return [dict(r) for r in rows]
+        return [{**dict(r), "current": r["id"] == p.credential_id} for r in rows]
 
     def revoke_link(self, p: Principal, rid: str, link_id: str) -> dict:
+        if link_id == p.credential_id:
+            raise HostError(409, "own_link", "you cannot revoke the link you are using; use another admin link")
         with self.db.write() as conn:
             self._report_row(conn, p, rid, "admin")
             cur = conn.execute(
@@ -826,6 +1018,71 @@ def _chart_refs(content: dict) -> set[tuple[str, int]]:
                 if isinstance(ref, dict) and isinstance(ref.get("id"), str) and isinstance(ref.get("version"), int):
                     out.add((ref["id"], ref["version"]))
     return out
+
+
+def _author(p: Principal, display_name: str | None) -> dict:
+    """A link may be shared by several people; each gives a name, recorded unverified (SPEC §7)."""
+    author = p.author()
+    name = " ".join(str(display_name or "").split())[:80]
+    if p.kind == "link" and name:
+        author = {**author, "name": name, "link": p.name}
+    return author
+
+
+def _target_in(content: dict, target: dict) -> dict | None:
+    (kind, tid), = target.items()
+    items = content["claims"] if kind == "claim" else content["blocks"]
+    return next((i for i in items if i["id"] == tid), None)
+
+
+def _check_target(content: dict, target: Any) -> None:
+    if not isinstance(target, dict) or len(target) != 1 or next(iter(target)) not in TARGET_KINDS:
+        raise HostError(422, "invalid", 'target is {"claim": id} or {"block": id}')
+    if _target_in(content, target) is None:
+        raise _not_found(f"{next(iter(target))} {next(iter(target.values()))} in this version")
+
+
+def _cell_visible(cell: dict, records: dict) -> bool:
+    record = records.get((cell["evidence"], cell["version"]))
+    return (record is not None and cell["column"] in record.column_names and record.rows is not None
+            and record.row(tuple(cell["key"])) is not None)
+
+
+def _check_cell(cell: Any, records: dict) -> dict:
+    """A highlighted cell, keyed by canonical text (as `row_keys` gives it), visible to the filer."""
+    if not isinstance(cell, dict) or set(cell) != {"evidence", "version", "key", "column"}:
+        raise HostError(422, "invalid", "a cell is {evidence, version, key, column}")
+    if not isinstance(cell["key"], list) or not all(k is None or isinstance(k, str) for k in cell["key"]):
+        raise HostError(422, "invalid", "a cell's key is its canonical text values, as row_keys gives them")
+    clean = {"evidence": cell["evidence"], "version": cell["version"], "key": cell["key"], "column": cell["column"]}
+    if not _cell_visible(clean, records):
+        raise HostError(422, "invalid", f"no visible cell {cell['column']} at {cell['key']} in "
+                                        f"{cell['evidence']} v{cell['version']}")
+    return clean
+
+
+def _challenge_permissions(p: Principal, role: str, row: sqlite3.Row) -> dict:
+    human = p.author_kind == "human"
+    live = row["status"] in ("open", "answered")
+    filer = row["credential_id"] == p.credential_id
+    return {
+        "can_reply": live,
+        "can_resolve": live and human,
+        "can_dismiss": live and human and RANK[role] >= RANK["editor"],
+        "can_reopen": row["status"] != "open" and (filer or (human and RANK[role] >= RANK["editor"])),
+    }
+
+
+def _why_not(action: str, p: Principal, row: sqlite3.Row) -> str:
+    if row["status"] in ("resolved", "dismissed") and action != "reopen":
+        return f"the challenge is already {row['status']}"
+    if action == "reopen" and row["status"] == "open":
+        return "the challenge is already open"
+    if p.author_kind != "human" and action in ("resolve", "dismiss"):
+        return f"only a person can {action} a challenge; an agent answers it"
+    if action == "dismiss":
+        return "dismissing a challenge needs the editor role"
+    return "only the person who filed it, or an editor, can reopen a challenge"
 
 
 def _withhold_values(content: dict, level: str) -> dict:

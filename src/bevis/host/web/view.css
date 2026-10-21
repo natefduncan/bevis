@@ -277,6 +277,70 @@ table.rows tr.focus td { box-shadow: inset 0 2px var(--accent), inset 0 -2px var
 .pager button { padding: 2px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; }
 .pager button:disabled { opacity: 0.4; cursor: default; }
 
+/* challenges */
+
+.flag {
+  margin-left: 2px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--err-soft);
+  color: var(--err);
+  font: 600 12px/1.5 var(--sans);
+  vertical-align: 2px;
+  cursor: pointer;
+}
+.quiet-chip { font-family: var(--sans); color: var(--muted); }
+.challenge-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.challenge-list li { border-top: 1px solid var(--line); padding: 6px 0; }
+.challenge-list li:first-child { border-top: 0; }
+.challenge-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.challenge-link:hover .challenge-body { color: var(--accent); }
+.challenge-body { flex: 1 1 60%; }
+.challenge-link .meta { flex-basis: 100%; margin: 0; }
+.message-card { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.message-card p { margin: 0; }
+.message-card .meta { margin-bottom: 4px; }
+.message-card.status { border-style: dashed; }
+.compose { margin: 8px 0 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 13px; color: var(--muted); }
+.field input, .field textarea, .field select {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 var(--sans);
+}
+.field textarea { resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 0 12px; }
+.row .field { flex: 1 1 120px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.toggle.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.cell-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.cell-chip { padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font: 12px var(--mono); }
+.compose ~ .evidence td, .compose ~ section td { cursor: crosshair; }
+table.rows td.selected-cell { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+table.rows td.challenged-cell { outline: 2px solid var(--err); outline-offset: -2px; background: var(--err-soft); font-weight: 700; }
+.share-form .actions { margin-top: 4px; }
+.created { margin: 12px 0; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+.created p { margin: 0 0 8px; }
+.created .secret { width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: 12px var(--mono); }
+table.links th, table.links td { white-space: normal; padding: 4px 6px; }
+table.links tr.revoked td { color: var(--muted); text-decoration: line-through; }
+table.links td:last-child { text-decoration: none; }
+
 /* narrow screens: the panel becomes a sheet over the report */
 
 @media (max-width: 900px) {

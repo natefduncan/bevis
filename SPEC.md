@@ -507,7 +507,11 @@ accounts can be added later without changing the model.
 
 - **Capability links, no accounts (v1).** A link is an unguessable token
   with a role, optional expiry, revocation, and a **disclosure level**.
-  Commenters enter a display name (recorded as unverified).
+  Commenters enter a display name (recorded as unverified). The author
+  record then carries both the name given and the link's own name.
+- An admin manages links in the web view (Share) or through the API.
+  A new link's secret is shown once. An admin cannot revoke the link
+  they are using.
 - The `tokens` table is designed so a token can later map to a user
   identity without changing the permission model.
 - Links target a **specific published version** or **"latest
@@ -572,6 +576,30 @@ interpreted, never compiled, and `href` channels are dropped.
 - If a later version changes the challenged claim, the challenge shows
   against the new version, marked "carried over".
 
+**Rules as built.**
+
+| Action | Who | Status |
+|---|---|---|
+| File | commenter and up, on a published version | → `open` |
+| Reply | anyone who sees challenges; with ops, suggester and up (the ops become a suggestion) | `open` → `answered` when someone other than the filer replies; `answered` → `open` when the filer replies |
+| Resolve | a person (not an agent), commenter and up | → `resolved` |
+| Dismiss | a person, editor and up | → `dismissed` |
+| Reopen | the filer, or a person who is editor and up | → `open` |
+
+- Challenges are visible to commenters and up, and to agents. Readers do
+  not see them, since a challenge's text can quote data beyond a reader's
+  disclosure level.
+- Highlighted cells are keyed by canonical text (as `row_keys` gives
+  them). A filer may point only at cells its own disclosure level shows,
+  so a challenge cannot probe for hidden rows. A viewer sees only the
+  highlighted cells its level shows.
+- Seen from version N, a challenge filed on an earlier version is
+  listed when its target still exists in N. It is marked `carried_over`,
+  with `target_changed` saying whether the claim or block changed. A
+  challenge whose target is gone does not show against N.
+- The filer is identified by credential, not by name, because names
+  given with a shared link are unverified.
+
 ---
 
 ## 9. Agent interface
@@ -583,8 +611,8 @@ Both send `Authorization: Bearer <agent key or link>`. Tools:
 `get_evidence`, `upsert_block`, `link_claim`, `edit_draft` (several
 operations at once), `validate_report` (validate or preview ops without
 storing), `suggest_edit`, `list_suggestions`, `accept_edit`,
-`reject_edit`, `publish`, `add_comment`, `list_comments`. Challenges add
-`list_open_challenges` and `reply_to_challenge` (build step 5).
+`reject_edit`, `publish`, `add_comment`, `list_comments`,
+`list_open_challenges`, `get_challenge`, and `reply_to_challenge`.
 
 Errors are `{"error": {"code", "message", "details"}}`, with HTTP status
 401 (no or bad credential), 403 (role too low), 404 (unknown, or not
@@ -747,12 +775,14 @@ Layout:
 `reports` (holding the draft as one JSON document, with its revision and
 latest validation), `versions` (immutable snapshots), `evidence` (one row
 per version, rows as JSON), `evidence_runs`, `suggestions`, `comments`,
-`activity`, and `credentials` (agent keys and links). Challenges add a
-table in build step 5. The schema is in `src/bevis/host/db.py`.
+`activity`, `credentials` (agent keys and links), `challenges`, and
+`challenge_events`. The schema is in `src/bevis/host/db.py`.
 
 A report is small (dozens of blocks), and every edit validates the whole
 draft. So the draft is read and written whole, and history lives in the
-activity log and published versions.
+activity log and published versions. The schema carries a version
+number (2 since challenges were added), and the host migrates an older
+database file when it opens it.
 
 Evidence rows are stored with typed values. Large result sets may move to
 files with the hash in the record (decided later from real data).

@@ -24,6 +24,7 @@ claim spans like [Revenue fell 12.0%]{#c1}, then link_claim c1 to its numbers:
 pct_change(cell(q-rev, 2024, revenue), cell(q-rev, 2025, revenue)), or "asserted".
 Every write is validated; read the findings and fix errors before publishing.
 On a report you did not create you are a suggester: use suggest_edit.
+Readers challenge published claims; check list_open_challenges and answer with reply_to_challenge.
 """
 
 
@@ -137,5 +138,23 @@ def create_mcp(service: Service) -> MCPServer:
     async def list_comments(report_id: str, ctx: Context) -> list[dict]:
         """Comments on the report."""
         return await call(ctx, service.list_comments, report_id)
+
+    @mcp.tool()
+    async def list_open_challenges(ctx: Context, report_id: str | None = None) -> list[dict]:
+        """Open challenges readers filed against published claims, on one report or every report you can
+        see. Each has its target, the reader's text, highlighted cells, and the thread so far."""
+        return await call(ctx, service.list_open_challenges, report_id)
+
+    @mcp.tool()
+    async def get_challenge(report_id: str, challenge_id: str, ctx: Context) -> dict:
+        """One challenge with its thread."""
+        return await call(ctx, service.get_challenge, report_id, challenge_id)
+
+    @mcp.tool()
+    async def reply_to_challenge(report_id: str, challenge_id: str, body: str, ctx: Context,
+                                 ops: list[dict] | None = None, message: str = "") -> dict:
+        """Answer a challenge: explain with `body`, and optionally propose a fix as `ops`, which becomes a
+        suggestion for an editor to review. A person resolves the challenge; you cannot close it."""
+        return await call(ctx, service.reply_to_challenge, report_id, challenge_id, body, ops, message)
 
     return mcp

@@ -18,7 +18,7 @@ from bevis.host.config import Settings
 from .conftest import example_evidence
 
 SPEC_TOOLS = {"create_report", "get_report", "add_evidence", "upsert_block", "link_claim", "validate_report",
-              "suggest_edit", "accept_edit", "publish", "add_comment"}
+              "suggest_edit", "accept_edit", "publish", "add_comment", "list_open_challenges", "reply_to_challenge"}
 
 
 @pytest.fixture(scope="module")
@@ -57,8 +57,13 @@ def session(url: str, secret: str):
 
 async def call(s: ClientSession, tool: str, **args):
     result = await s.call_tool(tool, args)
-    text = result.content[0].text
-    return result.is_error, (json.loads(text) if not result.is_error else text)
+    if result.is_error:
+        return True, result.content[0].text
+    # A list result arrives as one content block per item; the structured result holds it whole.
+    structured = result.structured_content
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        return False, structured["result"]
+    return False, structured if structured is not None else json.loads(result.content[0].text)
 
 
 def test_tools_are_listed(server):
@@ -121,3 +126,36 @@ def test_suggester_gets_a_hint(server):
         assert not err and sug["status"] == "open"
 
     other(flow)
+
+
+def test_challenge_tools(server):
+    url, service = server
+    key = service.create_agent_key("answerer")
+    run = session(url, key["secret"])
+    rid = run(lambda s: call(s, "create_report", title="Challenged"))[1]["id"]
+
+    from bevis.host.auth import Principal
+
+    agent = service.authenticate(key["secret"])
+    service.add_evidence(agent, rid, example_evidence()[2])
+    service.edit(agent, rid, [
+        {"op": "upsert_block", "block": {"type": "text", "text": "[Revenue fell 12.0%]{#c1}."}},
+        {"op": "link_claim", "claim": {"id": "c1", "block_id": "b1", "evidence": [{"id": "q-rev-yoy", "version": 1}],
+                                       "numbers": [{"text": "12.0%", "tier": "computed", "expression":
+                                                    "pct_change(cell(q-rev-yoy, 2024, revenue), "
+                                                    "cell(q-rev-yoy, 2025, revenue))"}]}}])
+    service.publish(agent, rid)
+    admin = Principal("x", "link", "Owner", "human", rid, "admin", "full", "draft")
+    commenter = service.authenticate(service.create_link(admin, rid, "commenter", "Reader")["secret"])
+    filed = service.file_challenge(commenter, rid, {"claim": "c1"}, "Net of refunds?")
+
+    async def flow(s):
+        err, open_ = await call(s, "list_open_challenges")
+        assert not err and [c["id"] for c in open_] == [filed["id"]]
+        err, out = await call(s, "reply_to_challenge", report_id=rid, challenge_id=filed["id"],
+                              body="Yes, refunded = false.")
+        assert not err and out["status"] == "answered"
+        err, open_ = await call(s, "list_open_challenges", report_id=rid)
+        assert not err and open_ == []
+
+    run(flow)
