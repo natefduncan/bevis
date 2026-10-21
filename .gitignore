@@ -224,3 +224,6 @@ examples/*/report.pdf
 
 # Host state from local runs
 bevis-data/
+
+# Browser test artifacts
+.playwright-mcp/

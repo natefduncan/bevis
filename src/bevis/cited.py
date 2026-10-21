@@ -7,7 +7,7 @@ from typing import Any, Iterator
 
 from . import expr
 from .bundle import Bundle
-from .evidence import LookupFailed
+from .evidence import LookupFailed, Record
 
 Ident = tuple[str, int]
 Key = tuple[str | None, ...]
@@ -44,34 +44,45 @@ def chart_fields(spec: Any) -> Iterator[str]:
             yield from chart_fields(v)
 
 
+def number_cells(number: dict, pinned: dict[str, Record]) -> list[tuple[Ident, Key, str]]:
+    """The cells one claim number cites, as ((id, version), canonical key, column).
+
+    Cells that do not resolve are left out; the validator reports them.
+    """
+    out = []
+    if number["tier"] == "direct":
+        c = number["cell"]
+        record = pinned.get(c["evidence"])
+        if record is not None and record.version == c["version"]:
+            try:
+                out.append(((record.id, record.version), record.coerce_json_key(c["key"]), c["column"]))
+            except LookupFailed:
+                pass
+    elif number["tier"] == "computed":
+        try:
+            node = expr.parse(number["expression"])
+        except expr.ParseError:
+            return out
+        for cell in expr.cells(node):
+            record = pinned.get(cell.evidence)
+            if record is None:
+                continue
+            try:
+                out.append(((record.id, record.version), record.coerce_key(list(cell.keys)), cell.column))
+            except LookupFailed:
+                continue
+    return out
+
+
 def citations(bundle: Bundle) -> dict[Ident, Citations]:
     out: dict[Ident, Citations] = {ident: Citations() for ident in bundle.evidence}
 
     for claim in bundle.report["claims"]:
         pinned = bundle.pinned(claim["evidence"])
         for number in claim["numbers"]:
-            if number["tier"] == "direct":
-                c = number["cell"]
-                record = bundle.record(c["evidence"], c["version"])
-                try:
-                    key = record.coerce_json_key(c["key"])
-                except LookupFailed:
-                    continue
-                out[(record.id, record.version)].add(key, c["column"])
-            elif number["tier"] == "computed":
-                try:
-                    node = expr.parse(number["expression"])
-                except expr.ParseError:
-                    continue
-                for cell in expr.cells(node):
-                    record = pinned.get(cell.evidence)
-                    if record is None:
-                        continue
-                    try:
-                        key = record.coerce_key(list(cell.keys))
-                    except LookupFailed:
-                        continue
-                    out[(record.id, record.version)].add(key, cell.column)
+            for ident, key, column in number_cells(number, pinned):
+                if ident in out:
+                    out[ident].add(key, column)
 
     for block in bundle.report["blocks"]:
         if block["type"] != "chart":

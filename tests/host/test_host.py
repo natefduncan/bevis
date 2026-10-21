@@ -410,3 +410,50 @@ def test_render_failure_is_a_structured_error(agent, monkeypatch):
     agent.post(f"/api/reports/{rid}/publish")
     r = agent.get(f"/api/reports/{rid}/export.pdf", expect=500)
     assert r["error"]["code"] == "render_failed" and "pzdr" in r["error"]["details"]
+
+
+def test_metadata_link_sees_no_values(host, agent, report):
+    agent.post(f"/api/reports/{report}/publish")
+    admin = Api(host, _admin_secret(host, agent, report))
+    link = admin.post(f"/api/reports/{report}/links", {"role": "reader", "name": "x", "disclosure": "metadata"},
+                      expect=201)
+    reader = Api(host, link["secret"])
+    view = reader.get(f"/api/reports/{report}", params={"render": True})
+    c1 = next(c for c in view["claims"] if c["id"] == "c1")
+    assert c1["numbers"][0]["value"] is None and c1["numbers"][0]["expression"].startswith("pct_change")
+    ev = reader.get(f"/api/reports/{report}/evidence/q-rev-yoy")
+    assert "rows" not in ev["evidence"] and ev["row_keys"] is None
+
+
+# -- the web view --------------------------------------------------------------------------------
+
+
+def test_view_page_and_headers(host):
+    r = host.get("/view")
+    assert r.status_code == 200 and "<title>Bevis</title>" in r.text
+    csp = r.headers["content-security-policy"]
+    assert "default-src 'none'" in csp and "unsafe-eval" not in csp and "frame-ancestors 'none'" in csp
+    assert "script-src 'self' https://cdn.jsdelivr.net" in csp
+    assert r.headers["referrer-policy"] == "no-referrer"
+    for path in ("/static/view.js", "/static/view.css", "/static/icon.svg"):
+        assert host.get(path).status_code == 200
+    assert host.get("/favicon.ico", follow_redirects=False).status_code == 308
+
+
+def test_rendered_report(agent, report):
+    agent.post(f"/api/reports/{report}/publish")
+    view = agent.get(f"/api/reports/{report}", params={"version": 1, "render": True})
+    b2 = next(b for b in view["blocks"] if b["id"] == "b2")
+    assert '<span class="claim" data-claim="c1">' in b2["html"]
+    c2 = next(c for c in view["claims"] if c["id"] == "c2")
+    assert c2["numbers"][0]["cells"] == [
+        {"evidence": "q-seg-delta", "version": 1, "key": ["Mid-market", "2025"], "column": "revenue"},
+        {"evidence": "q-seg-delta", "version": 1, "key": ["Mid-market", "2024"], "column": "revenue"},
+    ]
+    assert "html" not in agent.get(f"/api/reports/{report}", params={"version": 1})["blocks"][1]
+
+
+def test_row_keys_align_with_rows(agent, report):
+    ev = agent.get(f"/api/reports/{report}/evidence/q-seg-delta")
+    assert ev["row_keys"][0] == ["Enterprise", "2024"]
+    assert len(ev["row_keys"]) == len(ev["evidence"]["rows"])

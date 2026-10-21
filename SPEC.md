@@ -48,7 +48,10 @@ agent (local/sandbox) --evidence + edits--> host API --> SQLite (source of truth
 - **Interfaces:** REST and an MCP server are two front ends over the same
   handlers. There is one contract.
 - **Rendering:** the browser renders the web view from report JSON.
-  PDF/static exports are rendered server-side from a bundle.
+  PDF/static exports are rendered server-side from a bundle. Text blocks
+  are the one exception in the web view: the server converts them to
+  HTML with the same Pandoc parse the validator uses, so the page marks
+  exactly the spans that were checked (§7.1).
 - **Deployment:** develop locally; package as one container from day one;
   move to an always-on host when the first report is shared with someone
   else. All state is the SQLite file. Secrets come from environment
@@ -518,10 +521,38 @@ sent to the browser):
 |---|---|
 | `full` | all stored rows |
 | `cited` | only rows and columns that claims reference, plus SQL and metadata. A chart references every row it draws and the columns it encodes |
-| `metadata` | SQL, row counts, derivations, assumptions, no data values |
+| `metadata` | SQL, row counts, derivations, assumptions, no data values. Computed values are withheld too; expressions stay |
 
 Disclosure applies to the web view, API responses, and exports.
 
+### 7.1 Web view
+
+A link opens at `/view#key=<secret>`. The secret sits in the URL fragment,
+which browsers never send to the server, so it stays out of server and
+proxy logs. The fragment also carries the permalink state: `v` (version),
+`c` (an open claim), and `e`/`row` (an open evidence record and row).
+
+- **Claims** are underlined. Clicking one opens the evidence panel: the
+  claim's numbers with their tier, expression or cell, evaluated value,
+  and status, then each pinned evidence record with its source, run time,
+  provenance, hash, assumptions, SQL, and rows. Cited rows are tinted and
+  cited cells are bold. Tables page through all rows the link may see,
+  with a "cited rows only" filter.
+- **Chart marks** open their row in the panel. Strict charts draw one
+  mark per row, so the mark's datum is the row.
+- **Audit mode** (button, or the `a` key) colors every claim by status
+  (green verified, amber not verified, orange warning, red failed). It
+  also lists the findings and outlines blocks with uncited numbers.
+- Links that see the draft can switch between the draft and published
+  versions.
+
+**Safety.** Author Markdown reaches the page only as server-made HTML:
+raw HTML and TeX, images, every author attribute (`{onclick=…}`), and
+links other than `http(s)` and `mailto` are removed. Report data is
+inserted as text, never as HTML. The page sends a strict
+Content-Security-Policy with no inline script and no `eval`. Charts run
+with Vega's expression interpreter, so author chart expressions are
+interpreted, never compiled, and `href` channels are dropped.
 ---
 
 ## 8. Challenges and comments

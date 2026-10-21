@@ -17,9 +17,12 @@ from typing import Any
 
 from .. import bundle as bundle_mod
 from .. import export
+from .. import values
 from ..charts import data_values
+from ..cited import number_cells
 from ..disclosure import restrict
 from ..evidence import EvidenceError, Record
+from ..markdown import to_html
 from ..pdf import RenderError, render_pdf
 from ..validate import Subject, validate
 from . import ops as ops_mod
@@ -254,8 +257,12 @@ class Service:
                 })
         return out
 
-    def get_report(self, p: Principal, rid: str, version: int | None = None) -> dict:
-        """The draft (suggester and up), or a published version."""
+    def get_report(self, p: Principal, rid: str, version: int | None = None, render: bool = False) -> dict:
+        """The draft (suggester and up), or a published version.
+
+        With `render`, text blocks carry sanitized `html` and each claim number
+        lists the `cells` it cites: what the web view needs.
+        """
         with self.db.read() as conn:
             row, role = self._report_row(conn, p, rid, "reader")
             versions = [
@@ -283,7 +290,8 @@ class Service:
                     "title": row["title"],
                     "revision": row["revision"],
                     "role": role,
-                    **_content(draft),
+                    "disclosure": p.disclosure,
+                    **(self._render(conn, rid, _content(draft)) if render else _content(draft)),
                     "validation": loads(row["draft_validation"]),
                     "evidence": evidence,
                     "versions": versions,
@@ -300,10 +308,31 @@ class Service:
                 "published_at": v["published_at"],
                 "published_by": loads(v["published_by"]),
                 "override": loads(v["override"]),
-                **loads(v["content"]),
+                "disclosure": p.disclosure,
+                **_withhold_values(
+                    self._render(conn, rid, loads(v["content"])) if render else loads(v["content"]), p.disclosure),
                 "validation": loads(v["validation"]),
                 "versions": versions if p.sees_draft() else [x for x in versions if x["number"] == number],
             }
+
+    def _render(self, conn: sqlite3.Connection, rid: str, content: dict) -> dict:
+        content = copy.deepcopy(content)
+        claim_ids = frozenset(c["id"] for c in content["claims"])
+        for block in content["blocks"]:
+            if block["type"] == "text":
+                block["html"] = to_html(block["text"], claim_ids)
+        for claim in content["claims"]:
+            pinned = {}
+            for pin in claim["evidence"]:
+                record = self._record(conn, rid, pin["id"], pin["version"])
+                if record is not None:
+                    pinned[pin["id"]] = record
+            for n in claim["numbers"]:
+                n["cells"] = [
+                    {"evidence": eid, "version": ver, "key": list(key), "column": column}
+                    for (eid, ver), key, column in number_cells(n, pinned)
+                ]
+        return content
 
     # -- evidence -------------------------------------------------------------------------
 
@@ -433,7 +462,7 @@ class Service:
                 ]
                 versions = [r[0] for r in conn.execute(
                     "SELECT version FROM evidence WHERE report_id = ? AND id = ? ORDER BY version", (rid, eid))]
-                return {"evidence": doc, "versions": versions, "runs": runs}
+                return {"evidence": doc, "row_keys": _row_keys(doc), "versions": versions, "runs": runs}
             # A link reads evidence through the version it can see, at its disclosure level.
             number = self._visible_version(conn, p, rid, None)
             content = loads(conn.execute(
@@ -443,7 +472,8 @@ class Service:
                 raise _not_found(f"evidence {eid} in version {number}")
             ver = version or max(pinned)
             docs = self._docs(conn, rid, content)
-        return {"evidence": restrict(content, docs, p.disclosure)[(eid, ver)]}
+        doc = restrict(content, docs, p.disclosure)[(eid, ver)]
+        return {"evidence": doc, "row_keys": _row_keys(doc)}
 
     def diff_evidence(self, p: Principal, rid: str, eid: str, old: int, new: int) -> dict:
         self._require_draft(p)
@@ -796,6 +826,30 @@ def _chart_refs(content: dict) -> set[tuple[str, int]]:
                 if isinstance(ref, dict) and isinstance(ref.get("id"), str) and isinstance(ref.get("version"), int):
                     out.add((ref["id"], ref["version"]))
     return out
+
+
+def _withhold_values(content: dict, level: str) -> dict:
+    """At metadata disclosure, computed values are data too; expressions stay (SPEC §7)."""
+    if level != "metadata":
+        return content
+    content = copy.deepcopy(content)
+    for claim in content["claims"]:
+        for n in claim["numbers"]:
+            if n["tier"] == "computed":
+                n["value"] = None
+    return content
+
+
+def _row_keys(doc: dict) -> list[list[str | None]] | None:
+    """Each row's key in canonical text, aligned with `rows`, for matching cited cells."""
+    if doc.get("rows") is None:
+        return None
+    names = [c["name"] for c in doc["columns"]]
+    types = dict((c["name"], c["type"]) for c in doc["columns"])
+    return [
+        [values.from_json(types[k], row[names.index(k)]).canonical() for k in doc["key"]]
+        for row in doc["rows"]
+    ]
 
 
 def _check_revision(row: sqlite3.Row, base_revision: int | None) -> None:

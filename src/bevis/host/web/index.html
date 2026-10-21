@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Bevis</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/view.css">
+  <script src="https://cdn.jsdelivr.net/npm/vega@5.30.0/build/vega.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5.21.0/build/vega-lite.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.26.0/build/vega-embed.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-interpreter@1.0.5/build/vega-interpreter.min.js"></script>
+  <script type="module" src="/static/view.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="bar-title">
+      <h1 id="title">Bevis</h1>
+      <p id="meta" class="meta"></p>
+    </div>
+    <div class="bar-controls">
+      <label class="control" id="version-control" hidden>
+        <span>Version</span>
+        <select id="version"></select>
+      </label>
+      <button id="audit" class="toggle" type="button" aria-pressed="false" title="Show every claim's verification status (a)">
+        Audit mode
+      </button>
+    </div>
+  </header>
+  <div class="layout">
+    <main id="report" class="report" aria-live="polite"></main>
+    <aside id="panel" class="panel" hidden aria-label="Evidence">
+      <div class="panel-head">
+        <h2 id="panel-title"></h2>
+        <div class="panel-actions">
+          <button id="copy-link" type="button" class="quiet" title="Copy a link to this view">Copy link</button>
+          <button id="close-panel" type="button" class="quiet" aria-label="Close panel">✕</button>
+        </div>
+      </div>
+      <div id="panel-body" class="panel-body"></div>
+    </aside>
+  </div>
+</body>
+</html>

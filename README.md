@@ -6,9 +6,9 @@ support it. See [SPEC.md](SPEC.md).
 
 ## Status
 
-Build steps 1 to 3 (SPEC §12): the bundle format, the expression
-language, the PDF renderer, the validator, and the host (REST and MCP over
-one SQLite file).
+Build steps 1 to 4 (SPEC §12): the bundle format, the expression
+language, the PDF renderer, the validator, the host (REST and MCP over
+one SQLite file), and the web view.
 
 - `spec/bundle/`: JSON Schemas, integrity rules, value encodings, and the
   data hash for export bundles.
@@ -50,6 +50,16 @@ header `Authorization: Bearer <agent key>`. Creating a report returns a
 one-time admin link for the report's human owner. The owner uses it to
 make share links (`POST /api/reports/{id}/links`) with a role, a
 disclosure level, and a version scope.
+
+A link opens in a browser at `http://localhost:8000/view#key=<link>`. To try
+it with the example report:
+
+```sh
+BEVIS_URL=http://localhost:8000 BEVIS_KEY=<agent key> uv run python examples/seed_host.py
+```
+
+This prints view links for the draft (admin) and for readers at each
+disclosure level.
 
 Settings: `BEVIS_DATA_DIR`, `BEVIS_MAX_ROWS` (default 10000), and
 `BEVIS_MAX_BYTES` (default 5 MB) per evidence record.

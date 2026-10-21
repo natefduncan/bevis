@@ -3,15 +3,33 @@
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from .auth import Principal
 from .config import Settings
 from .mcp_server import create_mcp
 from .service import HostError, Service
+
+
+WEB_DIR = Path(__file__).parent / "web"
+
+# The view runs no inline script and no eval: Vega charts use the expression
+# interpreter. Vega-Embed injects its own styles, hence style 'unsafe-inline'.
+VIEW_CSP = "; ".join([
+    "default-src 'none'",
+    "script-src 'self' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+])
 
 
 def bearer(authorization: str | None) -> str | None:
@@ -42,6 +60,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     P = Depends(principal)
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        if request.url.path == "/view" or request.url.path.startswith("/static/"):
+            response.headers["Content-Security-Policy"] = VIEW_CSP
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Cache-Control"] = "no-cache"  # revalidate, so a new release shows at once
+        return response
+
+    @app.get("/view", include_in_schema=False)
+    def view() -> FileResponse:
+        return FileResponse(WEB_DIR / "index.html")
+
+    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> RedirectResponse:
+        return RedirectResponse("/static/icon.svg", status_code=308)
+
     @app.get("/healthz")
     def healthz() -> dict:
         return {"ok": True}
@@ -57,8 +96,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.list_reports(p)
 
     @app.get("/api/reports/{rid}")
-    def get_report(rid: str, version: int | None = None, p: Principal = P) -> dict:
-        return service.get_report(p, rid, version)
+    def get_report(rid: str, version: int | None = None, render: bool = False, p: Principal = P) -> dict:
+        return service.get_report(p, rid, version, render)
 
     # evidence
 
