@@ -6,10 +6,11 @@ support it. See [SPEC.md](SPEC.md).
 
 ## Status
 
-Build steps 1 to 5 (SPEC §12): the bundle format, the expression
-language, the PDF renderer, the validator, the host (REST and MCP over
-one SQLite file), the web view, and sharing (share links, disclosure
-levels, and challenges).
+All six build steps (SPEC §12): the bundle format, the expression language,
+the PDF renderer, the validator, the host (REST and MCP over one SQLite
+file), the web view, sharing (share links, disclosure levels, and
+challenges), Markdown and HTML export, Python and R clients, and
+deployment.
 
 - `spec/bundle/`: JSON Schemas, integrity rules, value encodings, and the
   data hash for export bundles.
@@ -27,6 +28,8 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), Pandoc, and XeLaTeX.
 uv sync
 uv run bevis validate examples/revenue-review      # check claims against evidence
 uv run bevis export pdf examples/revenue-review    # writes examples/revenue-review/report.pdf
+uv run bevis export md examples/revenue-review     # GitHub Markdown, charts in charts/
+uv run bevis export html examples/revenue-review   # one self-contained HTML file
 uv run pytest
 ```
 
@@ -38,12 +41,11 @@ uv run bevis keys create claude-analyst      # prints an agent key once
 uv run bevis serve                           # REST at /api, MCP at /mcp
 ```
 
-Or in a container, with the same commands inside it:
+To deploy behind HTTPS with Caddy, see [docs/deploy.md](docs/deploy.md):
 
 ```sh
-docker build -t bevis .
-docker run -d -p 8000:8000 -v bevis-data:/data --name bevis bevis
-docker exec bevis bevis keys create claude-analyst
+cd deploy && BEVIS_DOMAIN=bevis.example.com docker compose up -d --build
+docker compose exec bevis bevis keys create claude-analyst
 ```
 
 An agent connects its MCP client to `http://localhost:8000/mcp/` with the
@@ -61,6 +63,22 @@ BEVIS_URL=http://localhost:8000 BEVIS_KEY=<agent key> uv run python examples/see
 
 This prints view links for the draft (admin) and for readers at each
 disclosure level.
+
+## Clients
+
+Agents can call the API directly or over MCP. For scripts and notebooks:
+
+```python
+from bevis.client import Client   # BEVIS_URL and BEVIS_KEY from the environment
+Client().run_query("rpt_…", "q-rev-yoy", conn, "SELECT year, SUM(amount) AS revenue …",
+                   key=["year"], source="warehouse.orders")
+```
+
+```r
+library(bevis)                    # clients/r
+bevis_run_query(bevis_client(), "rpt_…", "q-rev-yoy", con, "SELECT …",
+                key = "year", source = "warehouse.orders")
+```
 
 Settings: `BEVIS_DATA_DIR`, `BEVIS_MAX_ROWS` (default 10000), and
 `BEVIS_MAX_BYTES` (default 5 MB) per evidence record.

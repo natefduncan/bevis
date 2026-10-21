@@ -10,6 +10,7 @@ bundle/
   evidence/<id>.v<version>.json     evidence.schema.json
   assets/<file>                     images referenced by image blocks
   report.pdf, report.md, report.html (derived)
+  charts/<block id>.svg             (derived) charts that report.md shows
 ```
 
 `common.schema.json` holds shared definitions. All files are UTF-8 JSON.

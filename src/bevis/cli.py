@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import bundle as bundle_mod
+from .derived import render_html, render_markdown
 from .markdown import MarkdownError
 from .pdf import RenderError, render_pdf
 from .validate import Result, Subject, validate
@@ -17,15 +18,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bevis")
     commands = parser.add_subparsers(dest="command", required=True)
     export = commands.add_parser("export", help="export a bundle").add_subparsers(dest="format", required=True)
-    pdf = export.add_parser("pdf", help="render a bundle to PDF")
-    pdf.add_argument("bundle", type=Path, help="bundle directory")
-    pdf.add_argument("-o", "--output", type=Path, help="output file (default: <bundle>/report.pdf)")
+    for fmt, what in (("pdf", "PDF"), ("md", "GitHub Markdown, with charts in charts/"),
+                      ("html", "one self-contained HTML file")):
+        sub = export.add_parser(fmt, help=f"render a bundle as {what}")
+        sub.add_argument("bundle", type=Path, help="bundle directory")
+        sub.add_argument("-o", "--output", type=Path, help=f"output file (default: <bundle>/report.{fmt})")
     check = commands.add_parser("validate", help="validate a bundle's claims against its evidence")
     check.add_argument("bundle", type=Path, help="bundle directory")
     check.add_argument("--json", action="store_true", help="print findings as JSON")
     serve = commands.add_parser("serve", help="run the host (REST at /api, MCP at /mcp)")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
+    backup = commands.add_parser("backup", help="copy the host's database consistently, even while it runs")
+    backup.add_argument("dest", type=Path, help="file to write, e.g. backups/bevis-2026-10-21.db")
     keys = commands.add_parser("keys", help="manage agent keys").add_subparsers(dest="action", required=True)
     create = keys.add_parser("create", help="create an agent key and print it once")
     create.add_argument("name", help="who the agent is, e.g. claude-analyst")
@@ -40,10 +45,12 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args)
     if args.command == "keys":
         return _keys(args)
+    if args.command == "backup":
+        return _backup(args)
     try:
         b = bundle_mod.load(args.bundle)
-        out = args.output or args.bundle / "report.pdf"
-        render_pdf(b, out)
+        out = args.output or args.bundle / f"report.{args.format}"
+        {"pdf": render_pdf, "md": render_markdown, "html": render_html}[args.format](b, out)
     except bundle_mod.BundleError as e:
         print(f"bevis: {e}", file=sys.stderr)
         return 1
@@ -97,6 +104,19 @@ def _serve(args) -> int:
     settings = Settings.from_env()
     print(f"bevis: data in {settings.data_dir.resolve()}", file=sys.stderr)
     uvicorn.run(create_app(settings), host=args.host, port=args.port)
+    return 0
+
+
+def _backup(args) -> int:
+    from .host.config import Settings
+    from .host.db import Database
+
+    settings = Settings.from_env()
+    if not settings.db_path.exists():
+        print(f"bevis: no database at {settings.db_path}", file=sys.stderr)
+        return 1
+    Database(settings.db_path).backup(args.dest)
+    print(args.dest)
     return 0
 
 

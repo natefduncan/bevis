@@ -21,7 +21,7 @@ from typing import Any
 from .bundle import Bundle, resolve_direct
 from .cited import Citations, citations
 from .evidence import Record
-from .markdown import AUTHOR_FORMAT, pandoc_json, stringify
+from .markdown import ATTR_AT, AUTHOR_FORMAT, NO_ATTR, SAFE_LINKS, pandoc_json, stringify
 from .markdown import str_node as _str
 from .values import Value
 
@@ -140,24 +140,37 @@ class _AuthorText:
             return []
         if t == "Image":  # images in prose would read files outside the bundle
             return self.walk(item["c"][1])
+        if t == "Link" and not str(item["c"][2][0]).lower().startswith(SAFE_LINKS):
+            return self.walk(item["c"][1])
         if t == "Span":
             span_id = item["c"][0][0]
             claim = self.claims.get(span_id)
             walked = self.walk(item)
+            walked["c"][0] = [span_id, [], []] if claim else list(NO_ATTR)
             if claim is None:
                 return [walked]
             self.span_text[span_id] = stringify(walked["c"][1])
             return [walked, *self.marker(claim)]
-        return [self.walk(item)]
+        walked = self.walk(item)
+        if t in ATTR_AT:  # author attributes would become HTML attributes (onclick=...) in exports
+            walked["c"][ATTR_AT[t]] = list(NO_ATTR)
+        if t == "Link":
+            walked["c"][2] = [walked["c"][2][0], ""]
+        return [walked]
 
 
 # -- the document ---------------------------------------------------------------
 
 
 class _Renderer:
-    def __init__(self, bundle: Bundle, workdir: Path):
+    def __init__(self, bundle: Bundle, workdir: Path, chart_format: str = "pdf", relative: bool = False):
+        """`chart_format` is pdf (for LaTeX) or svg. With `relative`, charts go in
+        `workdir/charts/` and images are referenced by relative path, as a file
+        written into `workdir` needs."""
         self.b = bundle
         self.workdir = workdir
+        self.chart_format = chart_format
+        self.relative = relative
         self.cites = citations(bundle)
         self.author = _AuthorText(bundle)
         self.slots: dict[str, list] = {}
@@ -243,14 +256,20 @@ class _Renderer:
             self._inline_data(spec)
         except _Withheld:
             return self.caption(block, esc("Chart not drawn: its data is not disclosed at this level."))
-        path = self.workdir / f"chart-{block['id']}.pdf"
+        name = f"{block['id']}.{self.chart_format}"
+        path = self.workdir / "charts" / name if self.relative else self.workdir / f"chart-{name}"
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
             import vl_convert as vlc
 
-            path.write_bytes(vlc.vegalite_to_pdf(spec, allowed_base_urls=[]))
+            if self.chart_format == "svg":
+                path.write_text(vlc.vegalite_to_svg(spec, allowed_base_urls=[]), encoding="utf-8")
+            else:
+                path.write_bytes(vlc.vegalite_to_pdf(spec, allowed_base_urls=[]))
         except Exception as e:  # vl-convert raises plain ValueError on bad specs
             raise RenderError(f"chart {block['id']}: {e}") from e
-        return f"![]({path.as_posix()})\n\n{self.caption(block)}"
+        ref = f"charts/{name}" if self.relative else path.as_posix()
+        return f"![{esc(block.get('caption', 'Chart'))}]({ref})\n\n{self.caption(block)}"
 
     def _inline_data(self, node: Any) -> None:
         if isinstance(node, dict):
@@ -267,9 +286,9 @@ class _Renderer:
                 self._inline_data(v)
 
     def image(self, block: dict) -> str:
-        path = (self.b.root / block["src"]).resolve()
+        path = block["src"] if self.relative else (self.b.root / block["src"]).resolve().as_posix()
         note = "**" + esc("Figure-level evidence only.") + "**"
-        return f"![{esc(block['alt'])}]({path.as_posix()}){{width=80%}}\n\n{self.caption(block, note)}"
+        return f"![{esc(block['alt'])}]({path}){{width=80%}}\n\n{self.caption(block, note)}"
 
     # appendix
 
@@ -446,9 +465,9 @@ def _row_object(record: Record, row: list[Value]) -> dict:
 # -- entry points -----------------------------------------------------------------
 
 
-def document_ast(bundle: Bundle, workdir: Path) -> dict:
+def document_ast(bundle: Bundle, workdir: Path, chart_format: str = "pdf", relative: bool = False) -> dict:
     """The Pandoc AST of the rendered report. Charts are written to `workdir`."""
-    return _Renderer(bundle, workdir).document()
+    return _Renderer(bundle, workdir, chart_format, relative).document()
 
 
 def render_pdf(bundle: Bundle, out: Path) -> None:

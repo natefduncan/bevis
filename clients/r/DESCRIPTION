@@ -1,0 +1,16 @@
+Package: bevis
+Title: Client for a Bevis Host of Auditable Reports
+Version: 0.1.0
+Authors@R: person("Nate", "Duncan", email = "nathan.duncan@freezingpointllc.com", role = c("aut", "cre"))
+Description: Runs a query where you already run queries and submits the result
+    as evidence to a Bevis host, which versions it and checks the claims
+    written over it. Also wraps the host's other agent operations.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.1)
+Imports:
+    httr2 (>= 1.0.0),
+    jsonlite (>= 1.8.0)
+Suggests:
+    DBI
+Config/roxygen2/version: 8.0.0

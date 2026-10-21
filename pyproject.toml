@@ -7,6 +7,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.158.0",
+    "httpx>=0.28.1",
     "jsonschema>=4.23",
     "mcp>=2.3.0",
     "uvicorn>=0.54.0",
@@ -17,10 +18,7 @@ dependencies = [
 bevis = "bevis.cli:main"
 
 [dependency-groups]
-dev = [
-    "httpx>=0.28.1",
-    "pytest>=8",
-]
+dev = ["pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]

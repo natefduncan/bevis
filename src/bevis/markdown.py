@@ -57,10 +57,10 @@ def stringify(node: Any) -> str:
 
 # Where each tagged node keeps its Attr. Author attributes never reach the HTML:
 # pandoc would write `{onclick=...}` through as a real attribute.
-_ATTR_AT = {"Code": 0, "CodeBlock": 0, "Header": 1, "Div": 0, "Span": 0, "Link": 0, "Image": 0,
+ATTR_AT = {"Code": 0, "CodeBlock": 0, "Header": 1, "Div": 0, "Span": 0, "Link": 0, "Image": 0,
             "Table": 0, "Figure": 0}
-_SAFE_LINK = ("http://", "https://", "mailto:")
-_NO_ATTR = ["", [], []]
+SAFE_LINKS = ("http://", "https://", "mailto:")
+NO_ATTR = ["", [], []]
 
 
 def _clean(node: Any, claims: frozenset[str]) -> Any:
@@ -80,7 +80,7 @@ def _clean_item(item: Any, claims: frozenset[str]) -> list:
         return []
     if t == "Image":
         return _clean(c[1], claims)
-    if t == "Link" and not str(c[2][0]).lower().startswith(_SAFE_LINK):
+    if t == "Link" and not str(c[2][0]).lower().startswith(SAFE_LINKS):
         return _clean(c[1], claims)
     if t == "Span" and c[0][0] in claims:
         return [{"t": "Span", "c": [["", ["claim"], [["claim", c[0][0]]]], _clean(c[1], claims)]}]
@@ -89,8 +89,8 @@ def _clean_item(item: Any, claims: frozenset[str]) -> list:
     if all(isinstance(x, dict) and "t" in x for x in c):
         return [{"t": t, "c": _clean(c, claims)}]  # Para, Emph, ...: c is a list of nodes
     c = [_clean(x, claims) if isinstance(x, list) else x for x in c]
-    if t in _ATTR_AT:
-        c[_ATTR_AT[t]] = _NO_ATTR
+    if t in ATTR_AT:
+        c[ATTR_AT[t]] = NO_ATTR
     if t == "Link":
         c[2] = [c[2][0], ""]  # keep the URL, drop the title
     return [{"t": t, "c": c}]

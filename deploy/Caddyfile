@@ -1,0 +1,18 @@
+# Every credential travels in a header or a URL fragment, so serve HTTPS only.
+{$BEVIS_DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 20MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	reverse_proxy bevis:8000 {
+		# MCP answers over a stream; pass each event through as it comes.
+		flush_interval -1
+	}
+}

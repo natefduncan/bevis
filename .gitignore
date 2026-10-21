@@ -227,3 +227,7 @@ bevis-data/
 
 # Browser test artifacts
 .playwright-mcp/
+
+# R package build output
+clients/r/*.tar.gz
+clients/r/*.Rcheck/

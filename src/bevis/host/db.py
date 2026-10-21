@@ -194,6 +194,19 @@ class Database:
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
+    def backup(self, dest: Path) -> None:
+        """A consistent copy of the database, safe while the host is running."""
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".partial")
+        src = self._connect()
+        out = sqlite3.connect(tmp)
+        try:
+            src.backup(out)
+        finally:
+            out.close()
+            src.close()
+        tmp.replace(dest)
+
     @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:
         conn = self._connect()

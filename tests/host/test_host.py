@@ -457,3 +457,40 @@ def test_row_keys_align_with_rows(agent, report):
     ev = agent.get(f"/api/reports/{report}/evidence/q-seg-delta")
     assert ev["row_keys"][0] == ["Enterprise", "2024"]
     assert len(ev["row_keys"]) == len(ev["evidence"]["rows"])
+
+
+def test_bundle_zip_has_derived_files(agent, report):
+    agent.post(f"/api/reports/{report}/publish")
+    z = zipfile.ZipFile(io.BytesIO(agent.get(f"/api/reports/{report}/export.zip").content))
+    names = set(z.namelist())
+    prefix = f"{report}-v1-full/"
+    assert {prefix + n for n in ("report.md", "report.html", "charts/b5.svg", "charts/b8.svg")} <= names
+    assert z.read(prefix + "report.md").startswith(b"# Revenue Review")
+
+
+def test_export_html(agent, report):
+    agent.post(f"/api/reports/{report}/publish")
+    r = agent.get(f"/api/reports/{report}/export.html")
+    assert r.content.startswith(b"<!DOCTYPE html>")
+    assert "sandbox" in r.headers["content-security-policy"]
+    assert r.headers["content-disposition"].startswith("attachment")
+
+
+def test_oversized_body_is_refused_unread(host, agent):
+    rid = agent.post("/api/reports", {"title": "x"}, expect=201)["id"]
+    big = b"{" + b" " * (host.service.settings.max_bytes * 3 + 2 * 1024 * 1024) + b"}"
+    r = host.post(f"/api/reports/{rid}/evidence", content=big,
+                  headers={"Authorization": f"Bearer {agent.secret}", "Content-Type": "application/json"})
+    assert r.status_code == 413 and r.json()["error"]["code"] == "too_large"
+
+
+def test_backup_while_running(host, agent, tmp_path):
+    from bevis.host.db import Database
+
+    rid = small_report(agent)
+    dest = tmp_path / "backups" / "bevis.db"
+    host.service.db.backup(dest)
+    copy = Database(dest)
+    with copy.read() as conn:
+        assert conn.execute("SELECT id FROM reports").fetchone()[0] == rid
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

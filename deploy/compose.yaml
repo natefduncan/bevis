@@ -1,0 +1,38 @@
+# Bevis behind Caddy, which gets and renews a TLS certificate on its own.
+#
+#   cd deploy
+#   BEVIS_DOMAIN=bevis.example.com docker compose up -d --build
+#   docker compose exec bevis bevis keys create claude-analyst
+#
+# See docs/deploy.md.
+
+services:
+  bevis:
+    build: ..
+    image: bevis:latest
+    restart: unless-stopped
+    volumes:
+      - bevis-data:/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    depends_on:
+      - bevis
+    ports:
+      - "${BEVIS_HTTP_PORT:-80}:80"
+      - "${BEVIS_HTTPS_PORT:-443}:443"
+      - "${BEVIS_HTTPS_PORT:-443}:443/udp"
+    environment:
+      BEVIS_DOMAIN: ${BEVIS_DOMAIN:?set BEVIS_DOMAIN to the host name readers will use}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  bevis-data:
+  caddy-data:
+  caddy-config:

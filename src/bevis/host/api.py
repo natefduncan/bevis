@@ -60,6 +60,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     P = Depends(principal)
 
+    # Evidence JSON runs larger than its rows' byte cap; allow headroom, refuse the rest unread.
+    max_body = service.settings.max_bytes * 3 + 1024 * 1024
+
+    @app.middleware("http")
+    async def limit_body(request: Request, call_next):
+        length = request.headers.get("content-length")
+        if length and length.isdigit() and int(length) > max_body:
+            return JSONResponse({"error": {"code": "too_large", "message": f"request body over {max_body:,} bytes"}},
+                                status_code=413)
+        return await call_next(request)
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
@@ -159,6 +170,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         name, data = service.export_bundle(p, rid, version)
         return Response(data, media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.get("/api/reports/{rid}/export.html")
+    def export_html(rid: str, version: int | None = None, p: Principal = P) -> Response:
+        name, data = service.export_html(p, rid, version)
+        # A downloaded report, not a page of this site: no scripts may run in it.
+        return Response(data, media_type="text/html; charset=utf-8", headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+        })
 
     @app.get("/api/reports/{rid}/export.pdf")
     def export_pdf(rid: str, version: int | None = None, p: Principal = P) -> Response:

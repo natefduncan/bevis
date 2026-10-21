@@ -23,6 +23,7 @@ from ..cited import number_cells
 from ..disclosure import restrict
 from ..evidence import EvidenceError, Record
 from ..markdown import to_html
+from ..derived import render_html
 from ..pdf import RenderError, render_pdf
 from ..validate import Subject, validate
 from . import ops as ops_mod
@@ -687,10 +688,26 @@ class Service:
         return f"{rid}-v{number}-{p.disclosure}", files
 
     def export_bundle(self, p: Principal, rid: str, version: int | None = None) -> tuple[str, bytes]:
+        """The bundle as a zip: canonical JSON, plus report.md and report.html derived from it."""
         name, files = self.export_files(p, rid, version)
-        with tempfile.TemporaryDirectory() as tmp:
-            export.write_dir(Path(tmp), files)  # proves the bundle loads
+        try:
+            files = export.with_derived(files)  # also proves the bundle loads
+        except RenderError as e:
+            raise HostError(500, "render_failed", "the bundle could not be rendered", str(e)) from e
         return f"{name}.zip", export.zip_bytes(files, name)
+
+    def export_html(self, p: Principal, rid: str, version: int | None = None) -> tuple[str, bytes]:
+        name, files = self.export_files(p, rid, version)
+        cached = self.settings.export_dir / f"{name}.html"
+        if not cached.exists():  # published versions never change
+            with tempfile.TemporaryDirectory() as tmp:
+                b = export.write_dir(Path(tmp), files)
+                cached.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    render_html(b, cached)
+                except RenderError as e:
+                    raise HostError(500, "render_failed", "the HTML could not be rendered", str(e)) from e
+        return f"{name}.html", cached.read_bytes()
 
     def export_pdf(self, p: Principal, rid: str, version: int | None = None) -> tuple[str, bytes]:
         name, files = self.export_files(p, rid, version)

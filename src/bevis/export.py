@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import zipfile
 from pathlib import Path
 
 from . import bundle
+from .derived import render_html, render_markdown
 from .disclosure import restrict
 
 Ident = tuple[str, int]
@@ -62,6 +64,19 @@ def write_dir(root: Path, files: dict[str, bytes]) -> bundle.Bundle:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
     return bundle.load(root)
+
+
+def with_derived(files: dict[str, bytes]) -> dict[str, bytes]:
+    """The bundle's files plus report.md (with charts/) and report.html (SPEC §10)."""
+    with tempfile.TemporaryDirectory(prefix="bevis-derived-") as tmp:
+        root = Path(tmp)
+        b = write_dir(root, files)
+        render_markdown(b, root / "report.md")
+        render_html(b, root / "report.html")
+        extra = {"report.md": (root / "report.md").read_bytes(), "report.html": (root / "report.html").read_bytes()}
+        for chart in sorted((root / "charts").glob("*.svg")) if (root / "charts").is_dir() else []:
+            extra[f"charts/{chart.name}"] = chart.read_bytes()
+    return {**files, **extra}
 
 
 def zip_bytes(files: dict[str, bytes], prefix: str) -> bytes:

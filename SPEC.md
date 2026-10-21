@@ -624,6 +624,15 @@ Thin client libraries (Python first, R later) run a query and POST the
 result to `add_evidence`. They are conveniences only. The HTTP API is the
 contract.
 
+- **Python:** `bevis.client.Client` runs a DB-API query (`run_query`) or
+  takes rows (`add_rows`). It reads each column's type off its values. A
+  `Decimal` stays exact, and a float is sent as its shortest round-trip
+  text.
+- **R:** the `bevis` package in `clients/r` takes a data frame
+  (`bevis_add_evidence`) or runs a DBI query (`bevis_run_query`). Doubles
+  are sent with 15 significant digits. For exact values, cast to text in
+  SQL and declare the column `decimal`.
+
 ---
 
 ## 10. Export
@@ -638,12 +647,17 @@ bundle/
   evidence/
     <evidence-id>.v<version>.json
   assets/          (images for image blocks)
+  charts/          (derived: chart SVGs for report.md)
   report.md        (derived)
   report.html      (derived, self-contained)
   report.pdf       (derived)
 ```
 
 - Exports are of a **published version**, never the live draft.
+- `report.md` (GitHub-flavored) and `report.html` (one self-contained
+  file) are rendered from the same Pandoc document as the PDF, with SVG
+  charts. Author attributes and unsafe links are removed, as in the web
+  view. The host serves HTML exports as downloads under a CSP sandbox.
 - The **disclosure level applies**: a bundle made at `cited` level must
   not contain data the link could not have seen.
 - Validation results as of publish time are included.
