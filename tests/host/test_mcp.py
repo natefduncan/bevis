@@ -159,3 +159,26 @@ def test_challenge_tools(server):
         assert not err and open_ == []
 
     run(flow)
+
+
+def test_tool_errors_are_the_error_object(server):
+    url, service = server
+    run = session(url, service.create_agent_key("shape")["secret"])
+    rid = run(lambda s: call(s, "create_report", title="Shapes"))[1]["id"]
+
+    async def flow(s):
+        err, text = await call(s, "get_report", report_id="rpt_nope")
+        assert err and json.loads(text)["error"]["code"] == "not_found"
+        err, text = await call(s, "get_report", report_id=rid, version="abc")
+        assert err
+        error = json.loads(text)["error"]
+        assert error["code"] == "malformed" and error["details"][0]["loc"] == ["version"]
+        for base in (True, "0"):
+            err, text = await call(s, "edit_draft", report_id=rid, ops=[], base_revision=base)
+            assert err and json.loads(text)["error"]["code"] == "malformed"
+        err, draft = await call(s, "get_report", report_id=rid)
+        err, out = await call(s, "edit_draft", report_id=rid, base_revision=draft["revision"],
+                              ops=[{"op": "upsert_block", "block": {"type": "text", "text": "Hi"}}])
+        assert not err, out
+
+    run(flow)

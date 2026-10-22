@@ -12,6 +12,7 @@ import re
 import sqlite3
 import tempfile
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,17 @@ class HostError(Exception):
         if self.details is not None:
             out["details"] = self.details
         return out
+
+
+def malformed_error(errors: Sequence[Mapping[str, Any]]) -> dict:
+    """The §9 error object for a request whose parameters fail type validation (pydantic `errors()`).
+
+    Each detail keeps the location, message, and type; the rejected input is not echoed back.
+    """
+    details = [{"loc": [p if isinstance(p, int) else str(p) for p in e.get("loc", ())],
+                "msg": str(e.get("msg", "")), "type": str(e.get("type", ""))} for e in errors]
+    message = "; ".join(f"{'.'.join(map(str, d['loc'])) or 'request'}: {d['msg']}" for d in details[:3])
+    return {"code": "malformed", "message": message or "malformed request", "details": details}
 
 
 def _not_found(what: str) -> HostError:
@@ -1139,6 +1151,8 @@ def _row_keys(doc: dict) -> list[list[str | None]] | None:
 
 
 def _check_revision(row: sqlite3.Row, base_revision: int | None) -> None:
+    if base_revision is not None and (not isinstance(base_revision, int) or isinstance(base_revision, bool)):
+        raise HostError(422, "malformed", "base_revision must be an integer")
     if base_revision is not None and base_revision != row["revision"]:
         raise HostError(409, "stale_revision",
                         f"the draft is at revision {row['revision']}, not {base_revision}; re-read it and retry")

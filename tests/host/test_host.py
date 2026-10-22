@@ -197,6 +197,36 @@ def test_stale_revision(agent):
     assert r["error"]["code"] == "stale_revision"
 
 
+@pytest.mark.parametrize("base", ["1", True, 1.0, [1]])
+@pytest.mark.parametrize("path", ["edits", "publish"])
+def test_base_revision_must_be_an_integer(agent, path, base):
+    rid = small_report(agent)
+    body = {"ops": [TEXT], "base_revision": base} if path == "edits" else {"base_revision": base}
+    r = agent.post(f"/api/reports/{rid}/{path}", body, expect=422)
+    assert r["error"]["code"] == "malformed" and "base_revision" in r["error"]["message"]
+
+
+@pytest.mark.parametrize("method, path, body", [
+    ("get", "/api/reports/{rid}?version=abc", None),
+    ("get", "/api/reports/{rid}/evidence/q?version=abc", None),
+    ("post", "/api/reports/{rid}/edits", [1]),
+    ("post", "/api/reports", "a title"),
+])
+def test_request_validation_errors_use_the_error_shape(agent, method, path, body):
+    rid = small_report(agent)
+    kw = {} if body is None else {"json": body}
+    r = getattr(agent.client, method)(path.format(rid=rid), headers=agent._headers(), **kw)
+    assert r.status_code == 422, r.text
+    error = r.json()["error"]
+    assert set(r.json()) == {"error"} and error["code"] == "malformed" and error["message"]
+    assert isinstance(error["details"], list) and error["details"][0]["loc"]
+
+
+def test_request_validation_comes_after_authentication(host):
+    r = host.get("/api/reports/rpt_x?version=abc", headers={"Authorization": "Bearer bvk_nope"})
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthenticated"
+
+
 @pytest.mark.parametrize(
     "op, message",
     [

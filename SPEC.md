@@ -622,7 +622,10 @@ Errors are `{"error": {"code", "message", "details"}}`, with HTTP status
 401 (no or bad credential), 403 (role too low), 404 (unknown, or not
 visible to this credential), 409 (conflict: stale revision, validation
 errors at publish, slug exists with `create_only`), 413 (evidence too
-large), or 422 (malformed). Over MCP the same object is the tool error.
+large), or 422 (malformed). A parameter or body of the wrong type
+(including a `base_revision` that is not an integer) is 422 `malformed`,
+with one detail per failing field. Over MCP the same object is the tool
+error.
 
 Thin client libraries (Python first, R later) run a query and POST the
 result to `add_evidence`. They are conveniences only. The HTTP API is the

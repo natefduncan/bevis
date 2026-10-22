@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .auth import Principal
 from .config import Settings
 from .mcp_server import create_mcp
-from .service import HostError, Service
+from .service import HostError, Service, malformed_error
 
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -54,6 +55,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(HostError)
     async def host_error(request: Request, exc: HostError) -> JSONResponse:
         return JSONResponse({"error": exc.to_json()}, status_code=exc.status)
+
+    @app.exception_handler(RequestValidationError)
+    async def malformed(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse({"error": malformed_error(exc.errors())}, status_code=422)
 
     def principal(authorization: str | None = Header(default=None)) -> Principal:
         return service.authenticate(bearer(authorization))

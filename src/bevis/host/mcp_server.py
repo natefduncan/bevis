@@ -11,9 +11,11 @@ from typing import Any, Callable
 
 import anyio
 from mcp.server.mcpserver import Context, MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp_types import CallToolResult, TextContent
+from pydantic import StrictInt, ValidationError
 
-from .service import HostError, Service
+from .service import HostError, Service, malformed_error
 
 INSTRUCTIONS = """\
 Bevis hosts auditable reports: prose whose claims link to the evidence behind them.
@@ -28,8 +30,40 @@ Readers challenge published claims; check list_open_challenges and answer with r
 """
 
 
+class _Server(MCPServer):
+    """Tool errors are the §9 error object itself: `{"error": {"code", "message", "details"}}`.
+
+    The SDK prefixes a tool's error text with "Error executing tool <name>: ", and reports
+    arguments that fail the input schema as pydantic text; both are replaced here.
+    """
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as exc:
+            if isinstance(exc, UnexpectedToolError):
+                raise
+            error = _error_object(exc)
+            if error is None:
+                raise
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": error},
+                                                                                    ensure_ascii=False))],
+                                  is_error=True)
+
+
+def _error_object(exc: BaseException) -> dict | None:
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, HostError):
+            return seen.to_json()
+        if isinstance(seen, ValidationError):
+            return malformed_error(seen.errors())
+        seen = seen.__cause__
+    return None
+
+
 def create_mcp(service: Service) -> MCPServer:
-    mcp = MCPServer(name="bevis", instructions=INSTRUCTIONS)
+    mcp = _Server(name="bevis", instructions=INSTRUCTIONS)
 
     async def call(ctx: Context, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         headers = ctx.headers or {}
@@ -74,7 +108,7 @@ def create_mcp(service: Service) -> MCPServer:
 
     @mcp.tool()
     async def upsert_block(report_id: str, block: dict, ctx: Context, position: dict | None = None,
-                           base_revision: int | None = None) -> dict:
+                           base_revision: StrictInt | None = None) -> dict:
         """Add or replace a block (editor). block: {id?, type: heading|text|chart, ...}. heading: level,
         text. text: Markdown with claim spans [..]{#cN}. chart: Vega-Lite spec whose data is
         {"evidence": {"id", "version"}}, evidence pins, caption. position: {after|before: block id} or
@@ -83,14 +117,14 @@ def create_mcp(service: Service) -> MCPServer:
         return await call(ctx, service.edit, report_id, [op], base_revision)
 
     @mcp.tool()
-    async def link_claim(report_id: str, claim: dict, ctx: Context, base_revision: int | None = None) -> dict:
+    async def link_claim(report_id: str, claim: dict, ctx: Context, base_revision: StrictInt | None = None) -> dict:
         """Create or replace a claim (editor). claim: {id: "cN" matching its span, block_id,
         evidence: [{id, version}], numbers: [{text, tier: direct|computed|asserted, cell | expression |
         derivation}], derivation?}. direct cell: {evidence, version, key: [...], column}."""
         return await call(ctx, service.edit, report_id, [{"op": "link_claim", "claim": claim}], base_revision)
 
     @mcp.tool()
-    async def edit_draft(report_id: str, ops: list[dict], ctx: Context, base_revision: int | None = None) -> dict:
+    async def edit_draft(report_id: str, ops: list[dict], ctx: Context, base_revision: StrictInt | None = None) -> dict:
         """Apply several ops atomically (editor). Ops: set_title, upsert_block, move_block, delete_block,
         link_claim, unlink_claim, repin {evidence_id, version, claims?, blocks?}, mark_non_data
         {block_id, text, reason}, unmark_non_data."""
@@ -123,7 +157,7 @@ def create_mcp(service: Service) -> MCPServer:
 
     @mcp.tool()
     async def publish(report_id: str, ctx: Context, override_reason: str | None = None,
-                      base_revision: int | None = None) -> dict:
+                      base_revision: StrictInt | None = None) -> dict:
         """Publish the draft as an immutable version (editor). Blocked by validation errors unless
         override_reason is given; the override is recorded on the version."""
         return await call(ctx, service.publish, report_id, override_reason, base_revision)
