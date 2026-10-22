@@ -7,7 +7,7 @@ import pytest
 from bevis import bundle
 from bevis.validate import Subject, validate
 
-from .conftest import EXAMPLE, Api, example_evidence
+from .conftest import EXAMPLE, Api, example_evidence, example_ops
 
 
 def admin_of(host, agent) -> tuple[str, Api]:
@@ -483,6 +483,20 @@ def test_export_html(agent, report):
     assert r.content.startswith(b"<!DOCTYPE html>")
     assert "sandbox" in r.headers["content-security-policy"]
     assert r.headers["content-disposition"].startswith("attachment")
+
+
+def test_chart_href_does_not_break_exports(agent):
+    rid = agent.post("/api/reports", {"title": "Revenue Review: 2024 vs 2025", "owner": "Nate"}, expect=201)["id"]
+    for payload in example_evidence():
+        agent.post(f"/api/reports/{rid}/evidence", payload)
+    ops = example_ops()
+    for op in ops:
+        if op["op"] == "upsert_block" and op["block"]["type"] == "chart":
+            op["block"]["spec"]["encoding"]["href"] = {"value": "javascript:alert(1)"}
+    agent.post(f"/api/reports/{rid}/edits", {"ops": ops})
+    agent.post(f"/api/reports/{rid}/publish")
+    for fmt in ("zip", "html", "pdf"):
+        agent.get(f"/api/reports/{rid}/export.{fmt}")
 
 
 def test_oversized_body_is_refused_unread(host, agent):

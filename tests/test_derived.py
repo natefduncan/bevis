@@ -51,3 +51,40 @@ def test_cli(example, fmt):
 
     assert main(["export", fmt, str(example.root)]) == 0
     assert (example.root / f"report.{fmt}").stat().st_size > 1000
+
+
+def add_href(r):
+    """Give chart b5 an href channel at the top level and b8 one inside a layer."""
+    blocks = {b["id"]: b for b in r["blocks"]}
+    blocks["b5"]["spec"]["encoding"]["href"] = {"value": "javascript:alert(1)"}
+    s = blocks["b8"]["spec"]
+    s["layer"] = [{"mark": s.pop("mark"), "encoding": {**s.pop("encoding"), "href": {"field": "month"}}}]
+
+
+@pytest.mark.parametrize("fmt", ["pdf", "md", "html"])
+def test_chart_href_is_dropped_in_exports(example, fmt):
+    from bevis.cli import main
+    from bevis.validate import Subject, validate
+
+    example.edit("report.json", add_href)
+    assert validate(Subject.from_bundle(example.load())).ok
+    assert main(["export", fmt, str(example.root)]) == 0
+    if fmt == "html":
+        html = (example.root / "report.html").read_text()
+        assert html.count("data:image/svg+xml") == 2 and "javascript:" not in html
+
+
+def test_drop_href_reaches_nested_views_and_leaves_data_alone():
+    from bevis.charts import drop_href
+
+    spec = {
+        "data": {"values": [{"href": "kept"}]},
+        "encoding": {"x": {"field": "a"}, "href": {"field": "a"}},
+        "vconcat": [{"layer": [{"encoding": {"href": {"value": "https://example.com"}, "y": {"field": "b"}}}]}],
+    }
+    drop_href(spec)
+    assert spec == {
+        "data": {"values": [{"href": "kept"}]},
+        "encoding": {"x": {"field": "a"}},
+        "vconcat": [{"layer": [{"encoding": {"y": {"field": "b"}}}]}],
+    }

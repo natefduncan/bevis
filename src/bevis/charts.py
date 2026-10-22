@@ -43,6 +43,23 @@ def fetches(spec: Any, path: str = "spec") -> Iterator[str]:
             yield from fetches(v, f"{path}[{i}]")
 
 
+def drop_href(spec: Any) -> None:
+    """Remove the `href` channel from every encoding in a spec, layers included (SPEC §7.1).
+
+    Exports render charts as images, where a link has nowhere to go, and
+    vl-convert fails on an href channel it cannot resolve.
+    """
+    if isinstance(spec, dict):
+        for k, v in spec.items():
+            if k == "encoding" and isinstance(v, dict):
+                v.pop("href", None)
+            if k != "data":
+                drop_href(v)
+    elif isinstance(spec, list):
+        for v in spec:
+            drop_href(v)
+
+
 def data_problems(spec: dict, pins: list[dict]) -> list[str]:
     """Chart data must be pinned evidence, and nothing may be fetched."""
     out = []

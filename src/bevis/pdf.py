@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .bundle import Bundle, resolve_direct
+from .charts import drop_href
 from .cited import Citations, citations
 from .evidence import Record
 from .markdown import ATTR_AT, AUTHOR_FORMAT, NO_ATTR, SAFE_LINKS, pandoc_json, stringify
@@ -253,6 +254,7 @@ class _Renderer:
 
     def chart(self, block: dict) -> str:
         spec = copy.deepcopy(block["spec"])
+        drop_href(spec)
         try:
             self._inline_data(spec)
         except _Withheld:

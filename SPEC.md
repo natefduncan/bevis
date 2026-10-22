@@ -657,7 +657,9 @@ bundle/
 - `report.md` (GitHub-flavored) and `report.html` (one self-contained
   file) are rendered from the same Pandoc document as the PDF, with SVG
   charts. Author attributes and unsafe links are removed, as in the web
-  view. The host serves HTML exports as downloads under a CSP sandbox.
+  view. Chart `href` channels are dropped in every export format,
+  including inside layers. The host serves HTML exports as downloads
+  under a CSP sandbox.
 - The **disclosure level applies**: a bundle made at `cited` level must
   not contain data the link could not have seen.
 - Validation results as of publish time are included.
