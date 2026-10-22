@@ -645,7 +645,8 @@ contract.
 - **Python:** `bevis.client.Client` runs a DB-API query (`run_query`) or
   takes rows (`add_rows`). It reads each column's type off its values. A
   `Decimal` stays exact, and a float is sent as its shortest round-trip
-  text.
+  text. Query params are recorded as JSON: dates as ISO text, decimals as
+  plain text, bytes as hex, other non-JSON values as their `str()`.
 - **R:** the `bevis` package in `clients/r` takes a data frame
   (`bevis_add_evidence`) or runs a DBI query (`bevis_run_query`). Doubles
   are sent with 15 significant digits. For exact values, cast to text in

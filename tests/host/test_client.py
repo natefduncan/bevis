@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from bevis.client import BevisError, Client, encode, infer_type, to_evidence
+from bevis.client import BevisError, Client, _json_safe, encode, infer_type, to_evidence
 
 
 @pytest.fixture
@@ -114,6 +114,56 @@ def test_to_evidence_with_declared_types_raises():
     with pytest.raises(ValueError):
         to_evidence(["b"], [["false"], ["f"]], types={"b": "boolean"})
     assert to_evidence(["b"], [["false"], [None]], types={"b": "boolean"})[1] == [[False], [None]]
+
+
+class _Conn:
+    """A DB-API connection that takes any parameter types, as drivers like psycopg do."""
+
+    def __init__(self, rows):
+        self.rows, self.executed = rows, []
+
+    def cursor(self):
+        return self
+
+    def execute(self, sql, params):
+        self.executed.append(params)
+        self.description = [("day",), ("amount",)]
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self):
+        pass
+
+
+def test_run_query_records_params_as_json(client):
+    conn = _Conn([(date(2025, 1, 2), Decimal("7.5"))])
+    rid = client.create_report("Params")["id"]
+    params = (date(2025, 1, 1), Decimal("2.50"), b"\x01")
+    out = client.run_query(rid, "q-days", conn, "SELECT day, amount FROM sales WHERE day >= %s AND amount > %s",
+                           params=params, key=["day"], source="pg:sales")
+    assert (out["outcome"], out["row_count"]) == ("created", 1)
+    assert conn.executed == [params]  # the driver still gets the original values
+    ev = client._call("GET", f"/api/reports/{rid}/evidence/q-days")["evidence"]
+    assert ev["params"] == {"args": ["2025-01-01", "2.5", "01"]}
+
+    out = client.run_query(rid, "q-since", conn, "SELECT day, amount FROM sales WHERE day >= %(since)s",
+                           params={"since": datetime(2025, 1, 2, 0, 0)}, key=["day"], source="pg:sales")
+    assert out["outcome"] == "created"
+    ev = client._call("GET", f"/api/reports/{rid}/evidence/q-since")["evidence"]
+    assert ev["params"] == {"since": "2025-01-02T00:00:00"}
+
+
+def test_params_are_made_json_safe_recursively():
+    assert _json_safe({
+        "day": date(2025, 1, 1), "at": datetime(2025, 1, 1, 9, 30, tzinfo=timezone.utc),
+        "rate": Decimal("1.50"), "blob": b"\x00\xff", "ids": (1, 2.5, None, True, "x"),
+        "nested": [{"d": Decimal("1E+2")}, {3: date(2024, 2, 29)}], "nan": float("nan"), "other": object,
+    }) == {
+        "day": "2025-01-01", "at": "2025-01-01T09:30:00+00:00", "rate": "1.5", "blob": "00ff",
+        "ids": [1, 2.5, None, True, "x"], "nested": [{"d": "100"}, {"3": "2024-02-29"}], "nan": "nan",
+        "other": str(object),
+    }
 
 
 def test_run_query_end_to_end(client):

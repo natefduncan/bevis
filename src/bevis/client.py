@@ -112,6 +112,28 @@ def _boolean(value: Any) -> bool:
     raise ValueError(f"{value!r} is not a boolean; give a bool or \"true\"/\"false\"")
 
 
+def _json_safe(value: Any) -> Any:
+    """Query params as JSON for the run record: dates and decimals as text, bytes as hex, unknown types as str()."""
+    if value is None or isinstance(value, (bool, str, int)):
+        return value
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format_decimal(value) if value.is_finite() else str(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    try:
+        return operator.index(value)  # integer types such as numpy's
+    except TypeError:
+        return str(value)
+
+
 def to_evidence(columns: Sequence[str], rows: Sequence[Sequence[Any]],
                 types: dict[str, str] | None = None) -> tuple[list[dict], list[list]]:
     """(columns with types, encoded rows) for add_evidence."""
@@ -154,7 +176,7 @@ class Client:
                      partial: bool | None = None, source_row_count: int | None = None,
                      run_at: str | None = None, create_only: bool = False) -> dict:
         body: dict[str, Any] = {
-            "id": id, "source": source, "sql": sql, "params": params or {}, "assumptions": list(assumptions),
+            "id": id, "source": source, "sql": sql, "params": _json_safe(params or {}), "assumptions": list(assumptions),
             "key": list(key), "columns": columns, "rows": rows,
         }
         if partial is not None:
