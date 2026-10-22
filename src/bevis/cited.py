@@ -75,10 +75,12 @@ def number_cells(number: dict, pinned: dict[str, Record]) -> list[tuple[Ident, K
 
 
 def citations(bundle: Bundle) -> dict[Ident, Citations]:
+    """What the report cites in each record. Pins with no record are skipped: a version
+    published over pin.unknown still has citations for the evidence that exists."""
     out: dict[Ident, Citations] = {ident: Citations() for ident in bundle.evidence}
 
     for claim in bundle.report["claims"]:
-        pinned = bundle.pinned(claim["evidence"])
+        pinned = bundle.pinned([p for p in claim["evidence"] if (p["id"], p["version"]) in bundle.evidence])
         for number in claim["numbers"]:
             for ident, key, column in number_cells(number, pinned):
                 if ident in out:
@@ -89,6 +91,8 @@ def citations(bundle: Bundle) -> dict[Ident, Citations]:
             continue
         fields = set(chart_fields(block["spec"]))
         for pin in block["evidence"]:
+            if (pin["id"], pin["version"]) not in out:
+                continue
             c = out[(pin["id"], pin["version"])]
             c.charted = True
             c.chart_columns |= fields & set(bundle.record(pin["id"], pin["version"]).column_names)

@@ -480,6 +480,8 @@ class Service:
                 raise _not_found(f"evidence {eid} in version {number}")
             ver = version or max(pinned)
             docs = self._docs(conn, rid, content)
+            if (eid, ver) not in docs:  # pinned over pin.unknown
+                raise _not_found(f"evidence {eid} v{ver}")
         doc = restrict(content, docs, p.disclosure)[(eid, ver)]
         return {"evidence": doc, "row_keys": _row_keys(doc)}
 
@@ -497,14 +499,24 @@ class Service:
         return evidence_diff(docs[old], docs[new])
 
     def _docs(self, conn: sqlite3.Connection, rid: str, content: dict) -> dict[tuple[str, int], dict]:
+        """The pinned evidence that exists. A pin that doesn't resolve is skipped: the validator
+        reports it as pin.unknown, and a publish may override that (§3.1)."""
         out = {}
         for eid, ver in export.pins_of(content):
             row = conn.execute("SELECT doc FROM evidence WHERE report_id = ? AND id = ? AND version = ?",
                                (rid, eid, ver)).fetchone()
-            if row is None:
-                raise HostError(409, "missing_evidence", f"{eid} v{ver} is pinned but does not exist")
-            out[(eid, ver)] = loads(row["doc"])
+            if row is not None:
+                out[(eid, ver)] = loads(row["doc"])
         return out
+
+    def _export_docs(self, conn: sqlite3.Connection, rid: str, content: dict) -> dict[tuple[str, int], dict]:
+        """Every pinned document: a bundle must list each version its report pins (spec/bundle rule 2)."""
+        docs = self._docs(conn, rid, content)
+        missing = sorted(export.pins_of(content) - set(docs))
+        if missing:
+            eid, ver = missing[0]
+            raise HostError(409, "missing_evidence", f"{eid} v{ver} is pinned but does not exist")
+        return docs
 
     # -- edits ------------------------------------------------------------------------------
 
@@ -682,7 +694,7 @@ class Service:
                 },
                 validation=loads(v["validation"])["counts"],
                 content=content,
-                docs=self._docs(conn, rid, content),
+                docs=self._export_docs(conn, rid, content),
                 level=p.disclosure,
             )
         return f"{rid}-v{number}-{p.disclosure}", files

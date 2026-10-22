@@ -170,3 +170,32 @@ def test_admin_cannot_revoke_own_link(shared):
     rid, admin = shared["rid"], shared["admin"]
     own = next(link for link in admin.get(f"/api/reports/{rid}/links") if link["current"])
     admin.delete(f"/api/reports/{rid}/links/{own['id']}", expect=409)
+
+
+def test_override_over_an_unknown_pin(host, agent, report):
+    """A version published over pin.unknown stays usable: the unknown pin is skipped (#1)."""
+    claim = {k: v for k, v in agent.get(f"/api/reports/{report}")["claims"][0].items() if k != "status"}
+    claim["evidence"] = [*claim["evidence"], {"id": "q-missing", "version": 1}]
+    out = agent.post(f"/api/reports/{report}/edits", {"ops": [{"op": "link_claim", "claim": claim}]})
+    assert "pin.unknown" in {f["code"] for f in out["validation"]["findings"]}
+    agent.post(f"/api/reports/{report}/publish", {"override_reason": "q-missing lands next week"})
+    admin = Api(host, _admin_secret(host, agent, report))
+
+    def link(**body):
+        return Api(host, admin.post(f"/api/reports/{report}/links", {"name": "link", **body}, expect=201)["secret"])
+
+    commenter, cited = link(role="commenter"), link(role="commenter", disclosure="cited")
+    cells = [{"evidence": "q-rev-yoy", "version": 1, "key": ["2025"], "column": "revenue"}]
+    ch = file(commenter, report, cells=cells)
+    file(commenter, report)
+    gone = {**cells[0], "evidence": "q-missing"}
+    r = commenter.post(f"/api/reports/{report}/challenges", {"target": {"claim": "c1"}, "body": "?", "cells": [gone]},
+                       expect=422)
+    assert "no visible cell" in r["error"]["message"]
+    assert cited.get(f"/api/reports/{report}/challenges/{ch['id']}")["cells"] == cells
+    assert commenter.get(f"/api/reports/{report}/evidence/q-rev-yoy")["evidence"]["id"] == "q-rev-yoy"
+    commenter.get(f"/api/reports/{report}/evidence/q-missing", expect=404)
+    # A bundle must list every version its report pins (spec/bundle rule 2), so exports still refuse.
+    for fmt in ("zip", "html", "pdf"):
+        r = commenter.get(f"/api/reports/{report}/export.{fmt}", expect=409)
+        assert r["error"]["code"] == "missing_evidence"
