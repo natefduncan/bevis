@@ -650,10 +650,12 @@ contract.
   plain text, bytes as hex, other non-JSON values as their `str()`.
 - **R:** the `bevis` package in `clients/r` takes a data frame
   (`bevis_add_evidence`) or runs a DBI query (`bevis_run_query`). Doubles
-  are sent with 15 significant digits. For exact values, cast to text in
+  are sent as plain decimals with 15 significant digits, in any locale.
+  `bit64::integer64` columns are integers. For exact values, cast to text in
   SQL and declare the column `decimal`. A double column declared `integer`
   is sent as exact JSON numbers, also beyond R's 32-bit integer range; a
-  fraction or `Inf` in it is an error.
+  fraction or `Inf` in it is an error. A column declared `boolean` takes
+  logicals or `"true"`/`"false"` only; anything else is an error, not null.
 
 ---
 

@@ -12,5 +12,7 @@ Imports:
     httr2 (>= 1.0.0),
     jsonlite (>= 1.8.0)
 Suggests:
-    DBI
+    DBI,
+    bit64,
+    hms
 Config/roxygen2/version: 8.0.0

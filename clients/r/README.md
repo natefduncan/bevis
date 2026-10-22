@@ -15,8 +15,13 @@ bevis_run_query(client, "rpt_…", "q-rev-yoy", con,
 ```
 
 Column types are read from the data frame: integer, double (as decimal),
-character and factor (as string), logical, Date, and POSIXct. Doubles are
-sent with 15 significant digits. For exact money values, cast to text in SQL
+character and factor (as string), logical, Date, POSIXct, and
+`bit64::integer64` (as exact integers). Time-of-day columns (`hms`, `difftime`)
+have no evidence type: declare them, e.g. `types = c(t = "string")`. Doubles
+are sent as plain decimals with 15 significant digits, whatever
+`options(OutDec)` says. A POSIXct column declared `date` keeps the date in its
+own time zone. A column declared `boolean` holds logicals or the text
+`"true"`/`"false"` (any case); other values are an error. For exact money values, cast to text in SQL
 and declare the column: `types = c(revenue = "decimal")`. A double column
 declared `integer` (`types = c(n = "integer")`) is sent as exact whole
 numbers, also beyond R's 32-bit integer range.
