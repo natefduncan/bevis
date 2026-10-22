@@ -622,7 +622,10 @@ Errors are `{"error": {"code", "message", "details"}}`, with HTTP status
 401 (no or bad credential), 403 (role too low), 404 (unknown, or not
 visible to this credential), 409 (conflict: stale revision, validation
 errors at publish, slug exists with `create_only`), 413 (evidence too
-large), or 422 (malformed). A parameter or body of the wrong type
+large), or 422 (malformed). Access comes before the payload: a report or
+version the credential cannot see is 404 whatever its role or payload
+(a link asking for a version outside its scope included), a role too
+low is 403, and only then are the payload's contents checked (422, 413). A parameter or body of the wrong type
 (including a `base_revision` that is not an integer) is 422 `malformed`,
 with one detail per failing field. Over MCP the same object is the tool
 error.

@@ -57,6 +57,69 @@ def test_unknown_report_is_404_not_403(host, agent):
     admin.get(f"/api/reports/{other}", expect=404)
 
 
+def test_status_order_is_404_then_403_then_422(host, agent):
+    """§9: an unknown or invisible report is 404 whatever the role or payload; then 403; then 422/413."""
+    rid = small_report(agent)
+    agent.post(f"/api/reports/{rid}/publish")
+    other = agent.post("/api/reports", {"title": "Other"}, expect=201)["id"]
+    admin = Api(host, _admin_secret(host, agent, rid))
+    reader = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "reader", "name": "r"}, expect=201)["secret"])
+    commenter = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "commenter", "name": "c"},
+                                     expect=201)["secret"])
+
+    for target in (other, "rpt_madeup"):
+        reader.post(f"/api/reports/{target}/edits", {"ops": []}, expect=404)
+        reader.post(f"/api/reports/{target}/validate", expect=404)
+        reader.post(f"/api/reports/{target}/publish", expect=404)
+        reader.get(f"/api/reports/{target}/suggestions", expect=404)
+        reader.get(f"/api/reports/{target}/activity", expect=404)
+        reader.get(f"/api/reports/{target}/evidence/q-rev-yoy/diff", params={"old": 1, "new": 1}, expect=404)
+        reader.post(f"/api/reports/{target}/suggestions/sug_x/accept", expect=404)
+        # A payload that is malformed or too large still gets 404 first.
+        reader.post(f"/api/reports/{target}/evidence", {"id": "BAD"}, expect=404)
+        reader.post(f"/api/reports/{target}/evidence", {**example_evidence()[0], "rows": [[1]] * 5000}, expect=404)
+        reader.post(f"/api/reports/{target}/comments", {"body": ""}, expect=404)
+        reader.post(f"/api/reports/{target}/challenges", {"body": "", "target": {}}, expect=404)
+        reader.post(f"/api/reports/{target}/links", {"role": "nope", "name": ""}, expect=404)
+
+    # The report is visible, the role is too low: 403, before the payload is looked at.
+    reader.post(f"/api/reports/{rid}/edits", {"ops": []}, expect=403)
+    reader.get(f"/api/reports/{rid}/activity", expect=403)
+    reader.post(f"/api/reports/{rid}/evidence", {"id": "BAD"}, expect=403)
+    reader.post(f"/api/reports/{rid}/comments", {"body": ""}, expect=403)
+    reader.post(f"/api/reports/{rid}/challenges", {"body": "", "target": {}}, expect=403)
+    commenter.post(f"/api/reports/{rid}/links", {"role": "nope", "name": ""}, expect=403)
+    # Allowed: now the payload is checked.
+    agent.post(f"/api/reports/{rid}/evidence", {"id": "BAD"}, expect=422)
+    agent.post(f"/api/reports/{rid}/evidence", {**example_evidence()[0], "rows": [[1]] * 5000}, expect=413)
+    commenter.post(f"/api/reports/{rid}/comments", {"body": ""}, expect=422)
+    commenter.post(f"/api/reports/{rid}/challenges", {"body": "", "target": {}}, expect=422)
+    admin.post(f"/api/reports/{rid}/links", {"role": "nope", "name": "x"}, expect=422)
+    commenter.post(f"/api/reports/{rid}/challenges/chl_x/status", {"status": "nope"}, expect=404)
+    commenter.post(f"/api/reports/{rid}/challenges/chl_x/replies", {"body": ""}, expect=404)
+
+
+def test_version_outside_scope_or_zero_is_404(host, agent):
+    rid = small_report(agent)
+    agent.post(f"/api/reports/{rid}/publish")
+    admin = Api(host, _admin_secret(host, agent, rid))
+    latest = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "commenter", "name": "c"},
+                                  expect=201)["secret"])
+    pinned = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "reader", "name": "r", "scope": 1},
+                                  expect=201)["secret"])
+    for link in (latest, pinned):
+        link.get(f"/api/reports/{rid}", params={"version": 7}, expect=404)
+        link.get(f"/api/reports/{rid}/export.zip", params={"version": 7}, expect=404)
+    latest.post(f"/api/reports/{rid}/comments", {"body": "hi", "version": 7}, expect=404)
+    latest.post(f"/api/reports/{rid}/challenges", {"body": "hi", "target": {"claim": "c1"}, "version": 7},
+                expect=404)
+
+    # version=0 is not "latest".
+    assert agent.get(f"/api/reports/{rid}/evidence/q-rev-yoy")["evidence"]["version"] == 1
+    agent.get(f"/api/reports/{rid}/evidence/q-rev-yoy", params={"version": 0}, expect=404)
+    latest.get(f"/api/reports/{rid}/evidence/q-rev-yoy", params={"version": 0}, expect=404)
+
+
 # -- the example, end to end ------------------------------------------------------------
 
 
@@ -404,7 +467,7 @@ def test_link_scopes(host, agent):
     latest = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "commenter", "name": "y"},
                                   expect=201)["secret"])
     assert pinned.get(f"/api/reports/{rid}")["title"] == "Small"
-    pinned.get(f"/api/reports/{rid}", params={"version": 2}, expect=403)
+    pinned.get(f"/api/reports/{rid}", params={"version": 2}, expect=404)  # outside its scope (§9)
     assert latest.get(f"/api/reports/{rid}")["title"] == "Second"
 
     c = latest.post(f"/api/reports/{rid}/comments", {"body": "Is c1 net of refunds?", "target": {"claim": "c1"}},

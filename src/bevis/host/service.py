@@ -127,18 +127,19 @@ class Service:
 
     # -- access ------------------------------------------------------------------------
 
-    def _report_row(self, conn: sqlite3.Connection, p: Principal, rid: str, min_role: str) -> tuple[sqlite3.Row, str]:
+    def _report_row(self, conn: sqlite3.Connection, p: Principal, rid: str, min_role: str,
+                    draft: bool = False) -> tuple[sqlite3.Row, str]:
+        """The report and the caller's role on it. An unknown or invisible report is 404 before any
+        403, and callers validate their payload only after this (§9)."""
         row = conn.execute("SELECT * FROM reports WHERE id = ?", (rid,)).fetchone()
         role = p.role_on(rid, row["creator_key"]) if row else None
         if row is None or role is None:
             raise _not_found(f"report {rid}")
+        if draft and not p.sees_draft():
+            raise HostError(403, "forbidden", "this link sees published versions only, not the draft")
         if RANK[role] < RANK[min_role]:
             raise HostError(403, "forbidden", f"this needs the {min_role} role; you are {role}")
         return row, role
-
-    def _require_draft(self, p: Principal) -> None:
-        if not p.sees_draft():
-            raise HostError(403, "forbidden", "this link sees published versions only, not the draft")
 
     def _visible_version(self, conn: sqlite3.Connection, p: Principal, rid: str, number: int | None) -> int:
         """The published version number this caller may read."""
@@ -150,11 +151,11 @@ class Service:
         elif p.scope == "latest":
             wanted = latest
             if number not in (None, latest):
-                raise HostError(403, "forbidden", "this link sees the latest published version only")
+                raise HostError(404, "not_found", "this link sees the latest published version only")
         else:
             wanted = int(p.scope or 0)
             if number not in (None, wanted):
-                raise HostError(403, "forbidden", f"this link sees version {wanted} only")
+                raise HostError(404, "not_found", f"this link sees version {wanted} only")
         if not conn.execute(
             "SELECT 1 FROM versions WHERE report_id = ? AND number = ?", (rid, wanted)
         ).fetchone():
@@ -358,6 +359,8 @@ class Service:
 
     def add_evidence(self, p: Principal, rid: str, payload: dict) -> dict:
         """Append a run; it creates a version when the data changed (SPEC §3.4)."""
+        with self.db.read() as conn:  # access before the payload (§9); checked again when writing
+            self._report_row(conn, p, rid, "suggester")
         if not isinstance(payload, dict):
             raise HostError(422, "invalid_evidence", "evidence must be an object")
         extra = set(payload) - EVIDENCE_FIELDS
@@ -466,11 +469,11 @@ class Service:
             if p.sees_draft():
                 row = conn.execute(
                     "SELECT doc FROM evidence WHERE report_id = ? AND id = ?"
-                    + (" AND version = ?" if version else "") + " ORDER BY version DESC LIMIT 1",
-                    (rid, eid, version) if version else (rid, eid),
+                    + (" AND version = ?" if version is not None else "") + " ORDER BY version DESC LIMIT 1",
+                    (rid, eid, version) if version is not None else (rid, eid),
                 ).fetchone()
                 if row is None:
-                    raise _not_found(f"evidence {eid}" + (f" v{version}" if version else ""))
+                    raise _not_found(f"evidence {eid}" + (f" v{version}" if version is not None else ""))
                 doc = loads(row["doc"])
                 runs = [
                     {**dict(r), "flags": loads(r["flags"]), "params": loads(r["params"]), "author": loads(r["author"])}
@@ -490,7 +493,7 @@ class Service:
             pinned = {v for i, v in export.pins_of(content) if i == eid}
             if not pinned or (version is not None and version not in pinned):
                 raise _not_found(f"evidence {eid} in version {number}")
-            ver = version or max(pinned)
+            ver = max(pinned) if version is None else version
             docs = self._docs(conn, rid, content)
             if (eid, ver) not in docs:  # pinned over pin.unknown
                 raise _not_found(f"evidence {eid} v{ver}")
@@ -498,9 +501,8 @@ class Service:
         return {"evidence": doc, "row_keys": _row_keys(doc)}
 
     def diff_evidence(self, p: Principal, rid: str, eid: str, old: int, new: int) -> dict:
-        self._require_draft(p)
         with self.db.read() as conn:
-            self._report_row(conn, p, rid, "suggester")
+            self._report_row(conn, p, rid, "suggester", draft=True)
             docs = {}
             for v in (old, new):
                 row = conn.execute("SELECT doc FROM evidence WHERE report_id = ? AND id = ? AND version = ?",
@@ -561,9 +563,8 @@ class Service:
 
     def edit(self, p: Principal, rid: str, ops: list, base_revision: int | None = None) -> dict:
         """Change the draft directly (editor and up)."""
-        self._require_draft(p)
         with self.db.write() as conn:
-            row, role = self._report_row(conn, p, rid, "suggester")
+            row, role = self._report_row(conn, p, rid, "suggester", draft=True)
             if RANK[role] < RANK["editor"]:
                 raise HostError(403, "forbidden",
                                 "suggesters propose changes with suggest_edit; editors apply them")
@@ -572,9 +573,8 @@ class Service:
 
     def preview(self, p: Principal, rid: str, ops: list | None = None) -> dict:
         """Validate the draft, or the draft with `ops` applied, without storing anything."""
-        self._require_draft(p)
         with self.db.read() as conn:
-            row, _ = self._report_row(conn, p, rid, "suggester")
+            row, _ = self._report_row(conn, p, rid, "suggester", draft=True)
             draft = loads(row["draft"])
             if not ops:
                 _, validation = self._validate(conn, rid, draft)
@@ -607,9 +607,8 @@ class Service:
         return {"id": sid, "status": "open", **preview}
 
     def list_suggestions(self, p: Principal, rid: str, status: str | None = "open") -> list[dict]:
-        self._require_draft(p)
         with self.db.read() as conn:
-            self._report_row(conn, p, rid, "suggester")
+            self._report_row(conn, p, rid, "suggester", draft=True)
             q = "SELECT * FROM suggestions WHERE report_id = ?" + (" AND status = ?" if status else "")
             rows = conn.execute(q + " ORDER BY created_at", (rid, status) if status else (rid,)).fetchall()
         return [_suggestion(r) for r in rows]
@@ -630,9 +629,8 @@ class Service:
         return out
 
     def resolve_suggestion(self, p: Principal, rid: str, sid: str, accept: bool, note: str = "") -> dict:
-        self._require_draft(p)
         with self.db.write() as conn:
-            report, role = self._report_row(conn, p, rid, "suggester")
+            report, role = self._report_row(conn, p, rid, "suggester", draft=True)
             if RANK[role] < RANK["editor"]:
                 raise HostError(403, "forbidden", "accepting or rejecting a suggestion needs the editor role")
             row = conn.execute("SELECT * FROM suggestions WHERE id = ? AND report_id = ?", (sid, rid)).fetchone()
@@ -657,9 +655,8 @@ class Service:
 
     def publish(self, p: Principal, rid: str, override_reason: str | None = None,
                 base_revision: int | None = None) -> dict:
-        self._require_draft(p)
         with self.db.write() as conn:
-            row, role = self._report_row(conn, p, rid, "suggester")
+            row, role = self._report_row(conn, p, rid, "suggester", draft=True)
             if RANK[role] < RANK["editor"]:
                 raise HostError(403, "forbidden", "publishing needs the editor role")
             _check_revision(row, base_revision)
@@ -750,11 +747,6 @@ class Service:
 
     def add_comment(self, p: Principal, rid: str, body: str, target: dict | None = None,
                     version: int | None = None, display_name: str | None = None) -> dict:
-        if not isinstance(body, str) or not body.strip():
-            raise HostError(422, "invalid", "a comment needs a body")
-        target = target or {}
-        if set(target) - set(TARGET_KINDS) or len(target) > 1:
-            raise HostError(422, "invalid", 'target is {"block": id}, {"claim": id}, or {}')
         cid = new_id("cmt")
         with self.db.write() as conn:
             self._report_row(conn, p, rid, "commenter")
@@ -762,6 +754,11 @@ class Service:
                 version = self._visible_version(conn, p, rid, version)
             elif version is not None:
                 version = self._visible_version(conn, p, rid, version)
+            if not isinstance(body, str) or not body.strip():
+                raise HostError(422, "invalid", "a comment needs a body")
+            target = target or {}
+            if set(target) - set(TARGET_KINDS) or len(target) > 1:
+                raise HostError(422, "invalid", 'target is {"block": id}, {"claim": id}, or {}')
             author = _author(p, display_name)
             conn.execute(
                 "INSERT INTO comments VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -783,9 +780,8 @@ class Service:
         ]
 
     def activity(self, p: Principal, rid: str, after: int = 0, limit: int = 100) -> list[dict]:
-        self._require_draft(p)
         with self.db.read() as conn:
-            self._report_row(conn, p, rid, "editor")
+            self._report_row(conn, p, rid, "editor", draft=True)
             rows = conn.execute(
                 "SELECT * FROM activity WHERE report_id = ? AND seq > ? ORDER BY seq LIMIT ?",
                 (rid, after, min(max(limit, 1), 1000)),
@@ -801,15 +797,15 @@ class Service:
     def file_challenge(self, p: Principal, rid: str, target: dict, body: str, cells: list | None = None,
                        version: int | None = None, display_name: str | None = None) -> dict:
         """Challenge a claim or block of a published version (commenter and up)."""
-        if not isinstance(body, str) or not body.strip():
-            raise HostError(422, "invalid", "a challenge needs text saying what is in doubt")
-        cells = cells or []
-        if not isinstance(cells, list) or len(cells) > 50:
-            raise HostError(422, "invalid", "cells is a list of at most 50 cells")
         cid = new_id("chl")
         with self.db.write() as conn:
             self._report_row(conn, p, rid, "commenter")
             number = self._visible_version(conn, p, rid, version)
+            if not isinstance(body, str) or not body.strip():
+                raise HostError(422, "invalid", "a challenge needs text saying what is in doubt")
+            cells = cells or []
+            if not isinstance(cells, list) or len(cells) > 50:
+                raise HostError(422, "invalid", "cells is a list of at most 50 cells")
             content = self._version_content(conn, rid, number)
             _check_target(content, target)
             visible = self._visible_records(conn, rid, content, p.disclosure)
@@ -862,13 +858,13 @@ class Service:
     def reply_to_challenge(self, p: Principal, rid: str, cid: str, body: str, ops: list | None = None,
                            message: str = "", display_name: str | None = None) -> dict:
         """Answer with a comment, or with a suggestion that goes through review (SPEC §6)."""
-        if not isinstance(body, str) or not body.strip():
-            raise HostError(422, "invalid", "a reply needs text")
         with self.db.read() as conn:
             role = self._challenge_reader(conn, p, rid)
             row = conn.execute("SELECT * FROM challenges WHERE id = ? AND report_id = ?", (cid, rid)).fetchone()
         if row is None:
             raise _not_found(f"challenge {cid}")
+        if not isinstance(body, str) or not body.strip():
+            raise HostError(422, "invalid", "a reply needs text")
         if row["status"] not in ("open", "answered"):
             raise HostError(409, "closed", f"challenge {cid} is {row['status']}; reopen it to reply")
         suggestion_id = None
@@ -900,14 +896,14 @@ class Service:
                              display_name: str | None = None) -> dict:
         """resolve (a human commenter and up), dismiss (a human editor and up), or reopen (the filer, or a
         human editor and up)."""
-        if status not in ("resolved", "dismissed", "open"):
-            raise HostError(422, "invalid", "status is resolved, dismissed, or open (reopen)")
         author = _author(p, display_name)
         with self.db.write() as conn:
             role = self._challenge_reader(conn, p, rid)
             row = conn.execute("SELECT * FROM challenges WHERE id = ? AND report_id = ?", (cid, rid)).fetchone()
             if row is None:
                 raise _not_found(f"challenge {cid}")
+            if status not in ("resolved", "dismissed", "open"):
+                raise HostError(422, "invalid", "status is resolved, dismissed, or open (reopen)")
             allowed = _challenge_permissions(p, role, row)
             action = {"resolved": "resolve", "dismissed": "dismiss", "open": "reopen"}[status]
             if not allowed[f"can_{action}"]:
@@ -982,23 +978,23 @@ class Service:
 
     def create_link(self, p: Principal, rid: str, role: str, name: str, *, disclosure: str = "full",
                     scope: str | int = "latest", author_kind: str = "human", expires_at: str | None = None) -> dict:
-        if role not in ROLES:
-            raise HostError(422, "invalid", f"role is one of {', '.join(ROLES)}")
-        if disclosure not in DISCLOSURES:
-            raise HostError(422, "invalid", f"disclosure is one of {', '.join(DISCLOSURES)}")
-        if author_kind not in ("human", "agent"):
-            raise HostError(422, "invalid", "author_kind is human or agent")
-        if not isinstance(name, str) or not name.strip():
-            raise HostError(422, "invalid", "a link needs a name (whose link it is)")
-        if expires_at is not None and not (isinstance(expires_at, str) and TIMESTAMP.fullmatch(expires_at)):
-            # Expiry is compared as text against now(), so it must be in the same UTC form.
-            raise HostError(422, "invalid", "expires_at is a UTC time like 2026-12-31T23:59:59Z")
-        if RANK[role] >= RANK["suggester"]:
-            scope = "draft"  # suggesters and up work on the draft
-        elif scope == "draft":
-            raise HostError(422, "invalid", "only suggester, editor, and admin links see the draft")
         with self.db.write() as conn:
             self._report_row(conn, p, rid, "admin")
+            if role not in ROLES:
+                raise HostError(422, "invalid", f"role is one of {', '.join(ROLES)}")
+            if disclosure not in DISCLOSURES:
+                raise HostError(422, "invalid", f"disclosure is one of {', '.join(DISCLOSURES)}")
+            if author_kind not in ("human", "agent"):
+                raise HostError(422, "invalid", "author_kind is human or agent")
+            if not isinstance(name, str) or not name.strip():
+                raise HostError(422, "invalid", "a link needs a name (whose link it is)")
+            if expires_at is not None and not (isinstance(expires_at, str) and TIMESTAMP.fullmatch(expires_at)):
+                # Expiry is compared as text against now(), so it must be in the same UTC form.
+                raise HostError(422, "invalid", "expires_at is a UTC time like 2026-12-31T23:59:59Z")
+            if RANK[role] >= RANK["suggester"]:
+                scope = "draft"  # suggesters and up work on the draft
+            elif scope == "draft":
+                raise HostError(422, "invalid", "only suggester, editor, and admin links see the draft")
             if scope not in ("draft", "latest"):
                 try:
                     scope = str(int(scope))
