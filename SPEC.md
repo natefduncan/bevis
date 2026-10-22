@@ -464,7 +464,7 @@ Token roles: `reader`, `commenter`, `suggester`, `editor`, `admin`.
 | Change | reader | commenter | suggester | editor | admin |
 |---|---|---|---|---|---|
 | View (within disclosure level) | yes | yes | yes | yes | yes |
-| Comment / file challenge | | yes | yes | yes | yes |
+| Comment / file challenge; see comments and challenges | | yes | yes | yes | yes |
 | Add evidence (append-only) | | | yes | yes | yes |
 | Propose change to blocks, claims, charts | | | yes (suggestion) | direct | direct |
 | Accept/reject suggestions | | | | yes | yes |
@@ -595,9 +595,12 @@ interpreted, never compiled, and `href` channels are dropped.
 | Dismiss | a person, editor and up | → `dismissed` |
 | Reopen | the filer, or a person who is editor and up | → `open` |
 
-- Challenges are visible to commenters and up, and to agents. Readers do
-  not see them, since a challenge's text can quote data beyond a reader's
-  disclosure level.
+- Challenges and comments are visible to commenters and up, and to
+  agents. Readers do not see them, in the API or the web view, since their
+  text can quote data beyond a reader's disclosure level.
+- A comment is on the report (`{}`), a claim, or a block. A claim or block
+  that the version commented on (the draft, for those who see it, when no
+  version is given) does not have is 404.
 - Highlighted cells are keyed by canonical text (as `row_keys` gives
   them). A filer may point only at cells its own disclosure level shows,
   so a challenge cannot probe for hidden rows. A viewer sees only the

@@ -781,16 +781,18 @@ class Service:
                     version: int | None = None, display_name: str | None = None) -> dict:
         cid = new_id("cmt")
         with self.db.write() as conn:
-            self._report_row(conn, p, rid, "commenter")
-            if not p.sees_draft():
-                version = self._visible_version(conn, p, rid, version)
-            elif version is not None:
+            report, _ = self._report_row(conn, p, rid, "commenter")
+            if not p.sees_draft() or version is not None:
                 version = self._visible_version(conn, p, rid, version)
             if not isinstance(body, str) or not body.strip():
                 raise HostError(422, "invalid", "a comment needs a body")
             target = target or {}
-            if set(target) - set(TARGET_KINDS) or len(target) > 1:
+            if not isinstance(target, dict) or set(target) - set(TARGET_KINDS) or len(target) > 1:
                 raise HostError(422, "invalid", 'target is {"block": id}, {"claim": id}, or {}')
+            if target:
+                content = (loads(report["draft"]) if version is None
+                           else self._version_content(conn, rid, version))
+                _check_target(content, target)
             author = _author(p, display_name)
             conn.execute(
                 "INSERT INTO comments VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -801,8 +803,9 @@ class Service:
         return {"id": cid, "target": target, "version": version}
 
     def list_comments(self, p: Principal, rid: str) -> list[dict]:
+        """Commenters and up, like challenges: a comment's text can quote data beyond a reader's level (§8)."""
         with self.db.read() as conn:
-            self._report_row(conn, p, rid, "reader")
+            self._report_row(conn, p, rid, "commenter")
             rows = conn.execute("SELECT * FROM comments WHERE report_id = ? ORDER BY created_at", (rid,)).fetchall()
             visible = None if p.sees_draft() else self._visible_version(conn, p, rid, None)
         return [

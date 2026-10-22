@@ -562,6 +562,37 @@ def _admin_secret(host, agent, rid) -> str:
     return host.service.create_link(p, rid, "admin", "Nate (test)")["secret"]
 
 
+def test_comments_are_for_commenters_and_targets_must_exist(host, agent):
+    rid = small_report(agent)
+    agent.post(f"/api/reports/{rid}/publish")
+    admin = Api(host, _admin_secret(host, agent, rid))
+    reader = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "reader", "name": "r", "disclosure": "metadata"},
+                                  expect=201)["secret"])
+    commenter = Api(host, admin.post(f"/api/reports/{rid}/links", {"role": "commenter", "name": "c"},
+                                     expect=201)["secret"])
+    agent.post(f"/api/reports/{rid}/comments", {"body": "Revenue was 4,210 in Q3", "target": {"claim": "c1"}, "version": 1},
+               expect=201)
+
+    r = reader.get(f"/api/reports/{rid}/comments", expect=403)
+    assert r["error"]["code"] == "forbidden"
+    assert [c["body"] for c in commenter.get(f"/api/reports/{rid}/comments")] == ["Revenue was 4,210 in Q3"]
+
+    # An unknown claim or block is 404, for draft viewers and published-version viewers alike.
+    for who in (agent, commenter):
+        who.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": {"claim": "c99"}}, expect=404)
+        who.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": {"block": "b99"}}, expect=404)
+    agent.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": {"claim": "c99"}, "version": 1}, expect=404)
+    commenter.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": "c1"}, expect=422)
+    commenter.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": {"block": "b1"}}, expect=201)
+    commenter.post(f"/api/reports/{rid}/comments", {"body": "hi"}, expect=201)
+
+    # A block only in the draft can be commented on from the draft, not from the published version.
+    agent.post(f"/api/reports/{rid}/edits", {"ops": [
+        {"op": "upsert_block", "block": {"id": "b9", "type": "text", "text": "New."}}]})
+    agent.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": {"block": "b9"}}, expect=201)
+    commenter.post(f"/api/reports/{rid}/comments", {"body": "hi", "target": {"block": "b9"}}, expect=404)
+
+
 def test_link_scopes(host, agent):
     rid = small_report(agent)
     admin = Api(host, _admin_secret(host, agent, rid))
@@ -581,7 +612,10 @@ def test_link_scopes(host, agent):
     c = latest.post(f"/api/reports/{rid}/comments", {"body": "Is c1 net of refunds?", "target": {"claim": "c1"}},
                     expect=201)
     assert c["version"] == 2
-    assert pinned.get(f"/api/reports/{rid}/comments") == []
+    pinned.get(f"/api/reports/{rid}/comments", expect=403)  # readers don't see comments (§8)
+    pinned_commenter = Api(host, admin.post(f"/api/reports/{rid}/links",
+                                            {"role": "commenter", "name": "p", "scope": 1}, expect=201)["secret"])
+    assert pinned_commenter.get(f"/api/reports/{rid}/comments") == []
     assert agent.get(f"/api/reports/{rid}/comments")[0]["author"]["name"] == "y"
 
     r = admin.post(f"/api/reports/{rid}/links", {"role": "reader", "name": "z", "scope": "draft"}, expect=422)

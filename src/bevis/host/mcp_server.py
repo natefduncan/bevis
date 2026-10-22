@@ -171,7 +171,7 @@ def create_mcp(service: Service) -> MCPServer:
 
     @mcp.tool()
     async def list_comments(report_id: str, ctx: Context) -> list[dict]:
-        """Comments on the report."""
+        """Comments on the report (commenters and up)."""
         return await call(ctx, service.list_comments, report_id)
 
     @mcp.tool()
