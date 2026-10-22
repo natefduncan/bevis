@@ -94,6 +94,16 @@ def test_errors_are_raised(client):
     assert (info.value.status, info.value.code) == (404, "not_found")
 
 
+def test_suggest_with_base_revision(client):
+    rid = client.create_report("Suggest")["id"]
+    revision = client.get_report(rid)["revision"]
+    op = {"op": "set_title", "title": "Renamed"}
+    with pytest.raises(BevisError) as info:
+        client.suggest(rid, [op], base_revision=revision + 1)
+    assert (info.value.status, info.value.code) == (409, "stale_revision")
+    assert client.suggest(rid, [op], "rename", base_revision=revision)["status"] == "open"
+
+
 def test_types_override(client):
     rid = client.create_report("Override")["id"]
     out = client.add_rows(rid, "q-text-money", ["k", "amount"], [["a", "12.30"]], types={"amount": "decimal"},

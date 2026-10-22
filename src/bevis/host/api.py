@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/reports/{rid}/suggestions", status_code=201)
     def suggest(rid: str, p: Principal = P, body: dict = Body(...)) -> dict:
-        return service.suggest(p, rid, body.get("ops"), body.get("message", ""))
+        return service.suggest(p, rid, body.get("ops"), body.get("message", ""), body.get("base_revision"))
 
     @app.get("/api/reports/{rid}/suggestions")
     def list_suggestions(rid: str, status: str | None = "open", p: Principal = P) -> list[dict]:

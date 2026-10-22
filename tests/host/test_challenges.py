@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from .conftest import Api
@@ -82,6 +84,52 @@ def test_reply_with_a_suggestion(shared, other_agent):
     assert sug["status"] == "open" and "challenge" in sug["message"]
     shared["commenter"].post(f"/api/reports/{rid}/challenges/{ch['id']}/replies",
                              {"body": "x", "ops": [op]}, expect=403)  # commenters can't suggest
+
+
+def test_reply_checks_status_in_its_own_transaction(host, shared, other_agent, monkeypatch):
+    """A challenge resolved while a reply's ops are validated is not replied to as closed (#11)."""
+    rid = shared["rid"]
+    ch = file(shared["commenter"], rid)
+    op = {"op": "set_title", "title": "Revenue, net of refunds"}
+    validate = host.service._validate
+    racer = []
+
+    def resolve_meanwhile(*args):
+        if not racer:
+            racer.append(threading.Thread(target=shared["admin"].post, args=(
+                f"/api/reports/{rid}/challenges/{ch['id']}/status", {"status": "resolved"})))
+            racer[0].start()
+            racer[0].join(timeout=0.5)  # finishes here unless the reply holds the write lock
+        return validate(*args)
+
+    monkeypatch.setattr(host.service, "_validate", resolve_meanwhile)
+    other_agent.post(f"/api/reports/{rid}/challenges/{ch['id']}/replies",
+                     {"body": "Clarified.", "ops": [op]}, expect=201)
+    racer[0].join()
+    out = shared["commenter"].get(f"/api/reports/{rid}/challenges/{ch['id']}")
+    assert [(e["kind"], e["from_status"], e["to_status"]) for e in out["thread"]] == [
+        ("reply", "open", "answered"), ("status", "answered", "resolved")]
+    assert out["status"] == "resolved"
+
+
+def test_failed_reply_leaves_no_suggestion(host, shared, other_agent, monkeypatch):
+    """A reply that fails after its suggestion is stored rolls the suggestion back too (#11)."""
+    rid = shared["rid"]
+    ch = file(shared["commenter"], rid)
+    log = host.service._log
+
+    def fail_on_reply(conn, rid_, author, action, *args):
+        if action == "reply_to_challenge":
+            raise RuntimeError("a later step fails")
+        return log(conn, rid_, author, action, *args)
+
+    monkeypatch.setattr(host.service, "_log", fail_on_reply)
+    with pytest.raises(RuntimeError):
+        other_agent.post(f"/api/reports/{rid}/challenges/{ch['id']}/replies",
+                         {"body": "Clarified.", "ops": [{"op": "set_title", "title": "Renamed"}]})
+    monkeypatch.undo()
+    assert shared["agent"].get(f"/api/reports/{rid}/suggestions", params={"status": "all"}) == []
+    assert shared["commenter"].get(f"/api/reports/{rid}/challenges/{ch['id']}")["thread"] == []
 
 
 def test_who_can_see_and_file(shared):

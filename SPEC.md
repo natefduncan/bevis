@@ -483,13 +483,14 @@ Token roles: `reader`, `commenter`, `suggester`, `editor`, `admin`.
   charts to another version of one evidence id), `mark_non_data`, and
   `unmark_non_data`. Every write validates the result and returns the
   findings, plus each claim or number whose status or computed value
-  changed. An edit may carry `base_revision`, and it fails if the draft
-  has moved on since.
+  changed. An edit or a suggestion may carry `base_revision`, and it
+  fails if the draft has moved on since.
 - Block ids are host-assigned (`bN`) unless given. Claim ids are chosen
   by the author, because the span `{#cN}` must name them; `get_report`
   returns the next free ids.
 - A **suggestion** is one atomic bundle (text change, claim links, new
-  evidence references). It is validated on submit and again on accept. The
+  evidence references). It is validated on submit and again on accept,
+  and records the draft revision it was validated against. The
   reviewer sees a diff and the validator results.
 - Suggestion diffs highlight claims whose evidence version or computed
   value changed.

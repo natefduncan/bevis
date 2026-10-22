@@ -457,6 +457,25 @@ def test_invalid_suggestion_is_refused(agent, other_agent):
                      expect=422)
 
 
+def test_suggestion_base_revision(agent, other_agent):
+    """A suggestion may carry base_revision, checked like an edit's (SPEC §6, #11)."""
+    rid = small_report(agent)
+    revision = agent.get(f"/api/reports/{rid}")["revision"]
+    title = {"op": "set_title", "title": "Revenue, revised"}
+    r = other_agent.post(f"/api/reports/{rid}/suggestions", {"ops": [title], "base_revision": revision - 1},
+                         expect=409)
+    assert r["error"]["code"] == "stale_revision"
+    for bad in (True, "1", 1.5):
+        r = other_agent.post(f"/api/reports/{rid}/suggestions", {"ops": [title], "base_revision": bad},
+                             expect=422)
+        assert r["error"]["code"] == "malformed"
+    assert agent.get(f"/api/reports/{rid}/suggestions") == []
+    sug = other_agent.post(f"/api/reports/{rid}/suggestions", {"ops": [title], "base_revision": revision},
+                           expect=201)
+    assert sug["revision"] == revision
+    assert agent.get(f"/api/reports/{rid}/suggestions")[0]["base_revision"] == revision
+
+
 # -- publishing ----------------------------------------------------------------------------------
 
 

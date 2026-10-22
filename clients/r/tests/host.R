@@ -27,6 +27,12 @@ if (!nzchar(url) || !nzchar(key)) {
       numbers = list(list(text = "12.0%", tier = "computed",
         expression = "pct_change(cell(q-rev-yoy, 2024, revenue), cell(q-rev-yoy, 2025, revenue))"))))))
   stopifnot(edit$validation$counts$errors == 0L)
+  title <- list(list(op = "set_title", title = "From R, renamed"))
+  stale <- tryCatch(bevis_suggest(client, rid, title, base_revision = edit$revision - 1L),
+                    bevis_error = function(e) e)
+  stopifnot(inherits(stale, "bevis_error"), stale$status == 409L, stale$code == "stale_revision")
+  sug <- bevis_suggest(client, rid, title, "rename", base_revision = edit$revision)
+  stopifnot(sug$status == "open", sug$revision == edit$revision)
   stopifnot(bevis_publish(client, rid)$version == 1L)
 
   err <- tryCatch(bevis_get_report(client, "rpt_missing"), bevis_error = function(e) e)

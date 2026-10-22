@@ -135,6 +135,19 @@ bevis_edit <- function(client, report_id, ops, base_revision = NULL) {
              list(ops = ops, base_revision = base_revision))
 }
 
+#' Propose edit operations as a suggestion for an editor to accept (suggesters)
+#'
+#' @param client From [bevis_client()].
+#' @param report_id The report.
+#' @param ops A list of operations, as for [bevis_edit()].
+#' @param message A message for the reviewer.
+#' @param base_revision Fail if the draft has moved past this revision.
+#' @export
+bevis_suggest <- function(client, report_id, ops, message = "", base_revision = NULL) {
+  bevis_call(client, "POST", sprintf("/api/reports/%s/suggestions", report_id),
+             list(ops = ops, message = message, base_revision = base_revision))
+}
+
 #' Publish the draft as a version (editors)
 #'
 #' @param client From [bevis_client()].

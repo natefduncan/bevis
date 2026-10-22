@@ -136,9 +136,10 @@ def create_mcp(service: Service) -> MCPServer:
         return await call(ctx, service.preview, report_id, ops)
 
     @mcp.tool()
-    async def suggest_edit(report_id: str, ops: list[dict], ctx: Context, message: str = "") -> dict:
+    async def suggest_edit(report_id: str, ops: list[dict], ctx: Context, message: str = "",
+                           base_revision: StrictInt | None = None) -> dict:
         """Propose ops as one suggestion for an editor to accept (suggester and up)."""
-        return await call(ctx, service.suggest, report_id, ops, message)
+        return await call(ctx, service.suggest, report_id, ops, message, base_revision)
 
     @mcp.tool()
     async def list_suggestions(report_id: str, ctx: Context, status: str = "open") -> list[dict]:

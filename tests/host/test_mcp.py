@@ -124,6 +124,13 @@ def test_suggester_gets_a_hint(server):
         err, sug = await call(s, "suggest_edit", report_id=rid,
                               ops=[{"op": "upsert_block", "block": {"type": "text", "text": "Hi"}}], message="intro")
         assert not err and sug["status"] == "open"
+        op = {"op": "set_title", "title": "Owned, renamed"}
+        err, text = await call(s, "suggest_edit", report_id=rid, ops=[op], base_revision=sug["revision"] + 1)
+        assert err and json.loads(text)["error"]["code"] == "stale_revision"
+        err, text = await call(s, "suggest_edit", report_id=rid, ops=[op], base_revision=True)
+        assert err and json.loads(text)["error"]["code"] == "malformed"
+        err, out = await call(s, "suggest_edit", report_id=rid, ops=[op], base_revision=sug["revision"])
+        assert not err and out["status"] == "open"
 
     other(flow)
 

@@ -173,8 +173,9 @@ class Client:
     def validate(self, report_id: str, ops: list[dict] | None = None) -> dict:
         return self._call("POST", f"/api/reports/{report_id}/validate", {"ops": ops} if ops else None)
 
-    def suggest(self, report_id: str, ops: list[dict], message: str = "") -> dict:
-        return self._call("POST", f"/api/reports/{report_id}/suggestions", {"ops": ops, "message": message})
+    def suggest(self, report_id: str, ops: list[dict], message: str = "", base_revision: int | None = None) -> dict:
+        return self._call("POST", f"/api/reports/{report_id}/suggestions",
+                          {"ops": ops, "message": message, "base_revision": base_revision})
 
     def publish(self, report_id: str, override_reason: str | None = None) -> dict:
         return self._call("POST", f"/api/reports/{report_id}/publish", {"override_reason": override_reason})

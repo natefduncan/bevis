@@ -584,35 +584,47 @@ class Service:
         """Validate the draft, or the draft with `ops` applied, without storing anything."""
         with self.db.read() as conn:
             row, _ = self._report_row(conn, p, rid, "suggester", draft=True)
-            draft = loads(row["draft"])
-            if not ops:
-                _, validation = self._validate(conn, rid, draft)
-                return {"revision": row["revision"], "validation": validation}
-            try:
-                applied = ops_mod.apply(draft, ops)
-            except ops_mod.OpError as e:
-                raise HostError(422, "invalid_op", str(e), {"op": e.index}) from e
-            content, validation = self._validate(conn, rid, applied.draft)
-            return {
-                "revision": row["revision"],
-                "validation": validation,
-                "changes": _number_changes(draft, {**content, "title": applied.draft["title"]}),
-                "diff": _diff(draft, {**content, "title": applied.draft["title"]}),
-            }
+            return self._preview(conn, row, ops)
+
+    def _preview(self, conn: sqlite3.Connection, row: sqlite3.Row, ops: list | None) -> dict:
+        rid = row["id"]
+        draft = loads(row["draft"])
+        if not ops:
+            _, validation = self._validate(conn, rid, draft)
+            return {"revision": row["revision"], "validation": validation}
+        try:
+            applied = ops_mod.apply(draft, ops)
+        except ops_mod.OpError as e:
+            raise HostError(422, "invalid_op", str(e), {"op": e.index}) from e
+        content, validation = self._validate(conn, rid, applied.draft)
+        return {
+            "revision": row["revision"],
+            "validation": validation,
+            "changes": _number_changes(draft, {**content, "title": applied.draft["title"]}),
+            "diff": _diff(draft, {**content, "title": applied.draft["title"]}),
+        }
 
     # -- suggestions ------------------------------------------------------------------------
 
-    def suggest(self, p: Principal, rid: str, ops: list, message: str = "") -> dict:
-        preview = self.preview(p, rid, ops)  # validates the ops now (SPEC §6)
-        sid = new_id("sug")
+    def suggest(self, p: Principal, rid: str, ops: list, message: str = "",
+                base_revision: int | None = None) -> dict:
         with self.db.write() as conn:
-            row, _ = self._report_row(conn, p, rid, "suggester")
-            conn.execute(
-                "INSERT INTO suggestions (id, report_id, author, message, ops, base_revision, status, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
-                (sid, rid, dumps(p.author()), message or "", dumps(ops), row["revision"], now()),
-            )
-            self._log(conn, rid, p.author(), "suggest", None, {"id": sid, "message": message, "ops": ops})
+            row, _ = self._report_row(conn, p, rid, "suggester", draft=True)
+            _check_revision(row, base_revision)
+            return self._suggest(conn, p, row, ops, message)
+
+    def _suggest(self, conn: sqlite3.Connection, p: Principal, row: sqlite3.Row, ops: list, message: str) -> dict:
+        """Validate the ops and store them as a suggestion, in the caller's write transaction, so the
+        stored base revision is the one they were validated against (SPEC §6)."""
+        rid = row["id"]
+        preview = self._preview(conn, row, ops)
+        sid = new_id("sug")
+        conn.execute(
+            "INSERT INTO suggestions (id, report_id, author, message, ops, base_revision, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
+            (sid, rid, dumps(p.author()), message or "", dumps(ops), row["revision"], now()),
+        )
+        self._log(conn, rid, p.author(), "suggest", None, {"id": sid, "message": message, "ops": ops})
         return {"id": sid, "status": "open", **preview}
 
     def list_suggestions(self, p: Principal, rid: str, status: str | None = "open") -> list[dict]:
@@ -867,23 +879,24 @@ class Service:
     def reply_to_challenge(self, p: Principal, rid: str, cid: str, body: str, ops: list | None = None,
                            message: str = "", display_name: str | None = None) -> dict:
         """Answer with a comment, or with a suggestion that goes through review (SPEC §6)."""
-        with self.db.read() as conn:
+        # One write transaction from the status check to the status update, so a concurrent resolve can't
+        # slip in between and a failure leaves no suggestion behind.
+        with self.db.write() as conn:
             role = self._challenge_reader(conn, p, rid)
             row = conn.execute("SELECT * FROM challenges WHERE id = ? AND report_id = ?", (cid, rid)).fetchone()
-        if row is None:
-            raise _not_found(f"challenge {cid}")
-        if not isinstance(body, str) or not body.strip():
-            raise HostError(422, "invalid", "a reply needs text")
-        if row["status"] not in ("open", "answered"):
-            raise HostError(409, "closed", f"challenge {cid} is {row['status']}; reopen it to reply")
-        suggestion_id = None
-        if ops:
-            if RANK[role] < RANK["suggester"]:
-                raise HostError(403, "forbidden", "proposing an edit needs the suggester role")
-            suggestion_id = self.suggest(p, rid, ops, message or f"In reply to challenge {cid}")["id"]
-        author = _author(p, display_name)
-        with self.db.write() as conn:
-            row = conn.execute("SELECT * FROM challenges WHERE id = ?", (cid,)).fetchone()
+            if row is None:
+                raise _not_found(f"challenge {cid}")
+            if not isinstance(body, str) or not body.strip():
+                raise HostError(422, "invalid", "a reply needs text")
+            if row["status"] not in ("open", "answered"):
+                raise HostError(409, "closed", f"challenge {cid} is {row['status']}; reopen it to reply")
+            suggestion_id = None
+            if ops:
+                if RANK[role] < RANK["suggester"]:
+                    raise HostError(403, "forbidden", "proposing an edit needs the suggester role")
+                report, _ = self._report_row(conn, p, rid, "suggester", draft=True)
+                suggestion_id = self._suggest(conn, p, report, ops, message or f"In reply to challenge {cid}")["id"]
+            author = _author(p, display_name)
             filer = row["credential_id"] == p.credential_id
             new_status = row["status"]
             if row["status"] == "open" and not filer:
