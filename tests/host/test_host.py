@@ -709,3 +709,57 @@ def test_backup_while_running(host, agent, tmp_path):
     with copy.read() as conn:
         assert conn.execute("SELECT id FROM reports").fetchone()[0] == rid
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_failed_render_is_not_cached(host, agent, monkeypatch):
+    from bevis.host import service as service_mod
+    from bevis.pdf import RenderError
+
+    def partial(bundle, out):
+        out.write_bytes(b"%PDF-partial")
+        raise RenderError("disk full")
+
+    monkeypatch.setattr(service_mod, "render_pdf", partial)
+    rid = small_report(agent)
+    agent.post(f"/api/reports/{rid}/publish")
+    agent.get(f"/api/reports/{rid}/export.pdf", expect=500)
+    monkeypatch.setattr(service_mod, "render_pdf", lambda bundle, out: out.write_bytes(b"%PDF-whole"))
+    assert agent.get(f"/api/reports/{rid}/export.pdf").content == b"%PDF-whole"
+    assert [p.name for p in host.service.settings.export_dir.iterdir()] == [f"{rid}-v1-full.pdf"]  # no temp files
+
+
+def test_concurrent_export_never_serves_a_partial_file(agent, monkeypatch):
+    from bevis.host import service as service_mod
+
+    started, release = threading.Event(), threading.Event()
+    calls = []
+
+    def slow(bundle, out):
+        calls.append(out)
+        out.write_text("<!DOCTYPE html><p>first half")
+        if len(calls) == 1:
+            started.set()
+            release.wait(10)
+        with out.open("a") as f:
+            f.write(" and second half</p>")
+
+    monkeypatch.setattr(service_mod, "render_html", slow)
+    rid = small_report(agent)
+    agent.post(f"/api/reports/{rid}/publish")
+    results = {}
+
+    def get(name):
+        results[name] = agent.get(f"/api/reports/{rid}/export.html").content
+
+    first = threading.Thread(target=get, args=("first",))
+    first.start()
+    assert started.wait(10)
+    second = threading.Thread(target=get, args=("second",))
+    second.start()
+    second.join(1)  # the second request may wait for the first render, but must not read its partial file
+    release.set()
+    first.join(10)
+    second.join(10)
+    whole = b"<!DOCTYPE html><p>first half and second half</p>"
+    assert results == {"first": whole, "second": whole}
+    assert len(calls) == 1  # one render per export, not one per request

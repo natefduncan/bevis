@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import sqlite3
 import tempfile
 import threading
+import zlib
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -80,6 +82,7 @@ class Service:
         self.db = Database(settings.db_path)
         self._records: OrderedDict[tuple[str, str, int], Record] = OrderedDict()
         self._records_lock = threading.Lock()  # sync handlers run in a threadpool
+        self._export_locks = [threading.Lock() for _ in range(16)]  # one render per export at a time
 
     # -- credentials ----------------------------------------------------------------
 
@@ -740,29 +743,34 @@ class Service:
 
     def export_html(self, p: Principal, rid: str, version: int | None = None) -> tuple[str, bytes]:
         name, files = self.export_files(p, rid, version)
-        cached = self.settings.export_dir / f"{name}.html"
-        if not cached.exists():  # published versions never change
-            with tempfile.TemporaryDirectory() as tmp:
-                b = export.write_dir(Path(tmp), files)
-                cached.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    render_html(b, cached)
-                except RenderError as e:
-                    raise HostError(500, "render_failed", "the HTML could not be rendered", str(e)) from e
-        return f"{name}.html", cached.read_bytes()
+        return f"{name}.html", self._cached_render(f"{name}.html", files, render_html, "HTML")
 
     def export_pdf(self, p: Principal, rid: str, version: int | None = None) -> tuple[str, bytes]:
         name, files = self.export_files(p, rid, version)
-        cached = self.settings.export_dir / f"{name}.pdf"
-        if not cached.exists():  # a published version never changes, so neither does its PDF
-            with tempfile.TemporaryDirectory() as tmp:
-                b = export.write_dir(Path(tmp), files)
-                cached.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    render_pdf(b, cached)
-                except RenderError as e:
-                    raise HostError(500, "render_failed", "the PDF could not be rendered", str(e)) from e
-        return f"{name}.pdf", cached.read_bytes()
+        return f"{name}.pdf", self._cached_render(f"{name}.pdf", files, render_pdf, "PDF")
+
+    def _cached_render(self, filename: str, files: dict[str, bytes], render, what: str) -> bytes:
+        """Render once per published version (they never change) and serve the cached file after.
+
+        The render goes to a temp file in the cache's own directory and is moved into place with
+        `os.replace`, so the cache path holds a complete file or nothing, even across processes.
+        """
+        cached = self.settings.export_dir / filename
+        if not cached.exists():
+            with self._export_locks[zlib.crc32(filename.encode()) % len(self._export_locks)]:
+                if not cached.exists():  # another request may have rendered it while we waited
+                    cached.parent.mkdir(parents=True, exist_ok=True)
+                    fd, part = tempfile.mkstemp(dir=cached.parent, prefix=f".{cached.stem}.", suffix=cached.suffix)
+                    os.close(fd)
+                    try:
+                        with tempfile.TemporaryDirectory() as tmp:
+                            render(export.write_dir(Path(tmp), files), Path(part))
+                        os.replace(part, cached)
+                    except RenderError as e:
+                        raise HostError(500, "render_failed", f"the {what} could not be rendered", str(e)) from e
+                    finally:
+                        Path(part).unlink(missing_ok=True)
+        return cached.read_bytes()
 
     # -- comments and activity ------------------------------------------------------------
 
