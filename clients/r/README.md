@@ -17,7 +17,9 @@ bevis_run_query(client, "rpt_…", "q-rev-yoy", con,
 Column types are read from the data frame: integer, double (as decimal),
 character and factor (as string), logical, Date, and POSIXct. Doubles are
 sent with 15 significant digits. For exact money values, cast to text in SQL
-and declare the column: `types = c(revenue = "decimal")`.
+and declare the column: `types = c(revenue = "decimal")`. A double column
+declared `integer` (`types = c(n = "integer")`) is sent as exact whole
+numbers, also beyond R's 32-bit integer range.
 
 Tests: `R CMD check` runs `tests/encoding.R`, and `tests/host.R` when
 `BEVIS_TEST_URL` and `BEVIS_TEST_KEY` point at a running host.

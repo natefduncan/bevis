@@ -650,7 +650,9 @@ contract.
 - **R:** the `bevis` package in `clients/r` takes a data frame
   (`bevis_add_evidence`) or runs a DBI query (`bevis_run_query`). Doubles
   are sent with 15 significant digits. For exact values, cast to text in
-  SQL and declare the column `decimal`.
+  SQL and declare the column `decimal`. A double column declared `integer`
+  is sent as exact JSON numbers, also beyond R's 32-bit integer range; a
+  fraction or `Inf` in it is an error.
 
 ---
 

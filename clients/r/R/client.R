@@ -18,13 +18,18 @@ print.bevis_client <- function(x, ...) {
   invisible(x)
 }
 
+# json_verbatim: integers beyond 32 bits arrive as class "json" digit strings.
+to_json <- function(body) {
+  jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", na = "null", digits = NA, json_verbatim = TRUE)
+}
+
 bevis_call <- function(client, method, path, body = NULL, query = list()) {
   req <- httr2::request(paste0(client$url, path))
   req <- httr2::req_method(req, method)
   req <- httr2::req_headers(req, Authorization = paste("Bearer", client$key), .redact = "Authorization")
   if (length(query)) req <- httr2::req_url_query(req, !!!query)
   if (!is.null(body)) {
-    json <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", na = "null", digits = NA)
+    json <- to_json(body)
     req <- httr2::req_body_raw(req, json, type = "application/json")
   }
   req <- httr2::req_error(req, is_error = function(resp) FALSE)

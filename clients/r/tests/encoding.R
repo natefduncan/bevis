@@ -31,4 +31,15 @@ stopifnot(identical(over$type, c("string", "decimal")))
 json <- jsonlite::toJSON(list(key = I("year"), assumptions = I(character())), auto_unbox = TRUE)
 stopifnot(identical(as.character(json), '{"key":["year"],"assumptions":[]}'))
 
+# Integral doubles beyond 32-bit range go out as exact JSON numbers, not null.
+to_json <- getFromNamespace("to_json", "bevis")
+big <- data.frame(n = c(3e9, -3e9, 2^53 + 2, 1e20, 7, NA))
+big_cols <- bevis_evidence_columns(big, types = c(n = "integer"))
+stopifnot(identical(as.character(to_json(enc(big, big_cols))),
+                    "[[3000000000],[-3000000000],[9007199254740994],[100000000000000000000],[7],[null]]"))
+stopifnot(identical(enc(big, big_cols)[[5]], list(7L)))
+stopifnot(inherits(try(enc(data.frame(n = 2.5e9 + 0.5), big_cols), silent = TRUE), "try-error"))
+stopifnot(inherits(try(enc(data.frame(n = Inf), big_cols), silent = TRUE), "try-error"))
+stopifnot(inherits(try(enc(data.frame(n = "3000000000"), big_cols), silent = TRUE), "try-error"))
+
 cat("encoding tests passed\n")

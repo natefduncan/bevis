@@ -38,6 +38,14 @@ if (!nzchar(url) || !nzchar(key)) {
   err <- tryCatch(bevis_get_report(client, "rpt_missing"), bevis_error = function(e) e)
   stopifnot(inherits(err, "bevis_error"), err$status == 404L, err$code == "not_found")
 
+  big <- data.frame(id = 1:3, n = c(3e9, -3e9, 2^53 + 2))
+  big_out <- bevis_add_evidence(client, rid, "q-big", big, key = "id", sql = "SELECT id, n", source = "x",
+                                types = c(n = "integer"))
+  stopifnot(big_out$outcome == "created")
+  call <- getFromNamespace("bevis_call", "bevis")
+  stored <- call(client, "GET", paste0("/api/reports/", rid, "/evidence/q-big"))
+  stopifnot(identical(vapply(stored$evidence$rows, function(r) r[[2]], 0), big$n))
+
   bad <- tryCatch(bevis_add_evidence(client, rid, "Bad Slug", df, key = "year", sql = "x", source = "x"),
                   bevis_error = function(e) e)
   stopifnot(bad$status == 422L)

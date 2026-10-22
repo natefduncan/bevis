@@ -29,13 +29,30 @@ format_decimal <- function(x) {
   out
 }
 
+# R integers stop at 32 bits. Integral doubles outside that range are written as
+# their exact digits and sent verbatim as JSON numbers (see to_json).
+encode_integral_double <- function(x, name) {
+  ok <- !is.na(x)
+  if (any(!is.finite(x[ok]))) stop(sprintf("column '%s' is declared integer but holds Inf", name), call. = FALSE)
+  if (any(x[ok] != round(x[ok]))) {
+    stop(sprintf("column '%s' is declared integer but holds fractions", name), call. = FALSE)
+  }
+  big <- ok & abs(x) > .Machine$integer.max
+  if (!any(big)) return(as.integer(x))
+  out <- as.list(as.integer(ifelse(big, NA, x)))
+  out[big] <- lapply(sprintf("%.0f", x[big]), function(s) structure(s, class = "json"))
+  out
+}
+
 encode_column <- function(x, type, name) {
   switch(type,
     integer = {
-      if (is.double(x) && any(x[!is.na(x)] != round(x[!is.na(x)]))) {
-        stop(sprintf("column '%s' is declared integer but holds fractions", name), call. = FALSE)
+      if (is.double(x)) encode_integral_double(x, name) else {
+        # as.integer warns and gives NA when it can't convert; never send that as null.
+        withCallingHandlers(as.integer(x), warning = function(w) {
+          stop(sprintf("column '%s' is declared integer: %s", name, conditionMessage(w)), call. = FALSE)
+        })
       }
-      as.integer(x)
     },
     decimal = format_decimal(x),
     string = as.character(x),
