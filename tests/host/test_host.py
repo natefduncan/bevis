@@ -1,5 +1,8 @@
 import io
 import json
+import random
+import sys
+import threading
 import zipfile
 
 import pytest
@@ -198,6 +201,69 @@ def test_create_only(agent):
     rid = small_report(agent)
     r = agent.post(f"/api/reports/{rid}/evidence", {**example_evidence()[2], "create_only": True}, expect=409)
     assert r["error"]["code"] == "evidence_exists"
+
+
+def test_rolled_back_evidence_is_not_cached(host, agent, monkeypatch):
+    """A version read inside a write that rolls back must not be served later (#10)."""
+    rid = small_report(agent)
+    claim = {**CLAIM["claim"], "evidence": [{"id": "q-rev-yoy", "version": 2}]}
+    agent.post(f"/api/reports/{rid}/edits", {"ops": [{"op": "link_claim", "claim": claim}]})  # pin.unknown for now
+    payload = example_evidence()[2]
+    revalidate = host.service._revalidate
+
+    def fail_after_revalidate(*args):
+        revalidate(*args)  # reads the uncommitted v2 for the claim that pins it
+        raise RuntimeError("a later step fails")
+
+    monkeypatch.setattr(host.service, "_revalidate", fail_after_revalidate)
+    with pytest.raises(RuntimeError):
+        agent.post(f"/api/reports/{rid}/evidence", {**payload, "rows": [[2024, "4210000"], [2025, "3790000"]]})
+    monkeypatch.undo()
+
+    v2 = agent.post(f"/api/reports/{rid}/evidence", {**payload, "rows": [[2024, "4210000"], [2025, "3704000"]]})
+    assert (v2["outcome"], v2["version"]) == ("new_version", 2)
+    [c1] = agent.get(f"/api/reports/{rid}")["claims"]
+    assert c1["status"] == "ok"  # 12.0% matches the committed v2, not the rolled-back one (-9.97%)
+
+
+def test_evidence_cache_is_thread_safe(host, agent, monkeypatch):
+    """Concurrent lookups and evictions in the shared cache must not raise (#10)."""
+    rid = small_report(agent)
+    with host.service.db.read() as conn:
+        doc = conn.execute("SELECT doc FROM evidence WHERE report_id = ?", (rid,)).fetchone()["doc"]
+
+    class Conn:  # every version resolves, so lookups keep filling and evicting the cache
+        in_transaction = False
+
+        def execute(self, *args):
+            return self
+
+        def fetchone(self):
+            return {"doc": doc}
+
+    monkeypatch.setattr(host.service, "record_cache_size", 4)  # small, so lookups often race evictions
+
+    errors = []
+
+    def hammer(seed):
+        versions = random.Random(seed)
+        try:
+            for _ in range(5000):
+                host.service._record(Conn(), rid, "q-rev-yoy", versions.randrange(6))
+        except Exception as e:  # noqa: BLE001 - any error is the failure
+            errors.append(e)
+
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=hammer, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert errors == []
 
 
 @pytest.mark.parametrize(

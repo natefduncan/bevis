@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import tempfile
+import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -72,10 +73,13 @@ def _not_found(what: str) -> HostError:
 
 
 class Service:
+    record_cache_size = 512
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.db = Database(settings.db_path)
         self._records: OrderedDict[tuple[str, str, int], Record] = OrderedDict()
+        self._records_lock = threading.Lock()  # sync handlers run in a threadpool
 
     # -- credentials ----------------------------------------------------------------
 
@@ -174,18 +178,23 @@ class Service:
 
     def _record(self, conn: sqlite3.Connection, rid: str, eid: str, version: int) -> Record | None:
         key = (rid, eid, version)
-        if key in self._records:
-            self._records.move_to_end(key)
-            return self._records[key]
+        with self._records_lock:
+            record = self._records.get(key)
+            if record is not None:
+                self._records.move_to_end(key)
+                return record
         row = conn.execute(
             "SELECT doc FROM evidence WHERE report_id = ? AND id = ? AND version = ?", (rid, eid, version)
         ).fetchone()
         if row is None:
             return None
         record = Record.from_json(json.loads(row["doc"]))
-        self._records[key] = record  # evidence is immutable, so caching is safe
-        if len(self._records) > 512:
-            self._records.popitem(last=False)
+        # Committed evidence is immutable, so caching it is safe. A row read inside a write may still roll back.
+        if not conn.in_transaction:
+            with self._records_lock:
+                self._records[key] = record
+                if len(self._records) > self.record_cache_size:
+                    self._records.popitem(last=False)
         return record
 
     def _subject(self, conn: sqlite3.Connection, rid: str, content: dict) -> Subject:
