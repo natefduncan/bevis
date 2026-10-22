@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -470,13 +471,32 @@ def document_ast(bundle: Bundle, workdir: Path, chart_format: str = "pdf", relat
     return _Renderer(bundle, workdir, chart_format, relative).document()
 
 
+def _breakable_code(node: Any) -> Any:
+    """Inline code as `\\Verb`, which wraps at any character; `\\texttt` never does,
+    so long expressions and hashes overran the margin. Headings are left alone,
+    since `\\Verb` cannot appear in a section title."""
+    if isinstance(node, list):
+        return [_breakable_code(x) for x in node]
+    if not isinstance(node, dict):
+        return node
+    if node.get("t") == "Header":
+        return node
+    if node.get("t") == "Code":
+        text = node["c"][1]
+        delim = next((d for d in "|!+=~^" if d not in text), None)
+        if delim is not None and "\n" not in text:
+            return {"t": "RawInline", "c": ["latex", f"\\Verb{delim}{text}{delim}"]}
+        return node
+    return {k: _breakable_code(v) for k, v in node.items()}
+
+
 def render_pdf(bundle: Bundle, out: Path) -> None:
     for tool in ("pandoc", "xelatex"):
         if shutil.which(tool) is None:
             raise RenderError(f"{tool} is not installed")
     with tempfile.TemporaryDirectory(prefix="bevis-pdf-") as tmp:
         work = Path(tmp)
-        doc = document_ast(bundle, work)
+        doc = _breakable_code(document_ast(bundle, work))
         (work / "header.tex").write_text(LATEX_HEADER)
         out = out.resolve()
         tmp_out = work / "report.pdf"
@@ -494,6 +514,8 @@ def render_pdf(bundle: Bundle, out: Path) -> None:
             capture_output=True,
             text=True,
             cwd=work,
+            # xdvipdfmx aborts when no system paper size is configured
+            env={**os.environ, "PAPERSIZE": os.environ.get("PAPERSIZE") or "letter"},
         )
         if proc.returncode != 0:
             raise RenderError("PDF rendering failed:\n" + proc.stderr.strip()[-3000:])
