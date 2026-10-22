@@ -12,7 +12,9 @@ posts the rows in the evidence encoding (decimals as exact strings).
 
 from __future__ import annotations
 
+import operator
 import os
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Iterable, Sequence
@@ -68,7 +70,7 @@ def encode(value: Any, type_: str) -> Any:
     if value is None:
         return None
     if type_ == "integer":
-        return int(value)
+        return _integer(value)
     if type_ == "decimal":
         if isinstance(value, float):
             if value != value or value in (float("inf"), float("-inf")):
@@ -78,8 +80,36 @@ def encode(value: Any, type_: str) -> Any:
     if type_ in ("date", "datetime"):
         return value if isinstance(value, str) else value.isoformat()
     if type_ == "boolean":
-        return bool(value)
+        return _boolean(value)
     return str(value)
+
+
+def _integer(value: Any) -> int:
+    """`value` as an int, or ValueError: evidence is exact, so nothing is rounded."""
+    if isinstance(value, bool):
+        raise ValueError(f"{value!r} is a boolean, not an integer")
+    if isinstance(value, float) and not value.is_integer() \
+            or isinstance(value, Decimal) and not (value.is_finite() and value == value.to_integral_value()):
+        raise ValueError(f"{value!r} is not an integer")
+    if isinstance(value, (float, Decimal)):
+        return int(value)
+    if isinstance(value, str):
+        if not re.fullmatch(r"[+-]?[0-9]+", value):
+            raise ValueError(f"{value!r} is not an integer literal")
+        return int(value)
+    try:
+        return operator.index(value)  # int, and integer types such as numpy's
+    except TypeError:
+        raise ValueError(f"{value!r} is not an integer") from None
+
+
+def _boolean(value: Any) -> bool:
+    """`value` as a bool: a bool, or the string "true"/"false" in any case. Anything else is a ValueError."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    raise ValueError(f"{value!r} is not a boolean; give a bool or \"true\"/\"false\"")
 
 
 def to_evidence(columns: Sequence[str], rows: Sequence[Sequence[Any]],

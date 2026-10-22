@@ -58,6 +58,64 @@ def test_encode_rejects_nan():
         encode(float("nan"), "decimal")
 
 
+@pytest.mark.parametrize(
+    "value, type_, encoded",
+    [
+        (2.0, "integer", 2),
+        (Decimal("3.00"), "integer", 3),
+        ("-42", "integer", -42),
+        ("+7", "integer", 7),
+        (12345678901234567890, "integer", 12345678901234567890),
+        (True, "boolean", True),
+        (False, "boolean", False),
+        ("true", "boolean", True),
+        ("FALSE", "boolean", False),
+        ("False", "boolean", False),
+    ],
+)
+def test_encode_exact_integers_and_booleans(value, type_, encoded):
+    out = encode(value, type_)
+    assert out == encoded and type(out) is type(encoded)
+
+
+@pytest.mark.parametrize(
+    "value, type_",
+    [
+        (2.7, "integer"),
+        (Decimal("2.5"), "integer"),
+        (float("nan"), "integer"),
+        (float("inf"), "integer"),
+        (Decimal("NaN"), "integer"),
+        (Decimal("Infinity"), "integer"),
+        ("2.0", "integer"),
+        ("1_000", "integer"),
+        (" 12", "integer"),
+        ("", "integer"),
+        (True, "integer"),
+        (date(2025, 1, 1), "integer"),
+        ("f", "boolean"),
+        ("t", "boolean"),
+        ("1", "boolean"),
+        ("yes", "boolean"),
+        ("", "boolean"),
+        (1, "boolean"),
+        (0, "boolean"),
+        (1.0, "boolean"),
+    ],
+)
+def test_encode_refuses_to_round_or_reinterpret(value, type_):
+    with pytest.raises(ValueError):
+        encode(value, type_)
+
+
+def test_to_evidence_with_declared_types_raises():
+    with pytest.raises(ValueError):
+        to_evidence(["a"], [[2.7]], types={"a": "integer"})
+    with pytest.raises(ValueError):
+        to_evidence(["b"], [["false"], ["f"]], types={"b": "boolean"})
+    assert to_evidence(["b"], [["false"], [None]], types={"b": "boolean"})[1] == [[False], [None]]
+
+
 def test_run_query_end_to_end(client):
     db = sqlite3.connect(":memory:")
     db.executescript("""
