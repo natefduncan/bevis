@@ -365,11 +365,16 @@ class _Validator:
             where = {"claim": cid, "number": i}
             shown = numbers.parse(n["text"])
             if span is not None:
-                match = next((t for t in unclaimed if t.text == n["text"]), None)
-                if match is None:
-                    self.add(ERROR, "number.not_in_span", f"“{n['text']}” does not appear in the span", **where)
+                if n["tier"] == "asserted" and not numbers.is_token(n["text"]):
+                    # a written-out number ("twelve percent") is never a token: it only has to be there
+                    found = bool(n["text"].strip()) and n["text"] in span.text
                 else:
-                    unclaimed.remove(match)
+                    match = next((t for t in unclaimed if t.text == n["text"]), None)
+                    found = match is not None
+                    if found:
+                        unclaimed.remove(match)
+                if not found:
+                    self.add(ERROR, "number.not_in_span", f"“{n['text']}” does not appear in the span", **where)
             if n["tier"] == "asserted":
                 self.add(INFO, "number.asserted", f"“{n['text']}” is asserted: {n['derivation']}", **where)
                 continue

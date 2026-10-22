@@ -83,6 +83,11 @@ def tokens(text: str) -> list[Displayed]:
     return [_from_match(m) for m in _TOKEN.finditer(text)]
 
 
+def is_token(text: str) -> bool:
+    """Whether `text` is exactly one numeric token, parseable or not."""
+    return _TOKEN.fullmatch(text.strip()) is not None
+
+
 def parse(text: str) -> Displayed | None:
     """One displayed number, or None when `text` is not exactly one parseable number."""
     m = _TOKEN.fullmatch(text.strip())

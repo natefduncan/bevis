@@ -243,6 +243,39 @@ def test_asserted_number(example):
     assert r.claims["c4"].status == "unverified"
 
 
+def add_asserted(example, text):
+    edit_claim(example, "c1", lambda c: c["numbers"].append(
+        {"text": text, "tier": "asserted", "derivation": "eyeball", "status": "ok"}))
+
+
+def test_written_out_asserted_number(example):
+    replace_text(example, "b2", "]{#c1}", ", about twelve percent]{#c1}")
+    add_asserted(example, "twelve percent")
+    r = run(example)
+    assert codes(r, claim="c1", number=3) == ["number.asserted"]
+    assert codes(r, claim="c1") == ["number.asserted", "text.written_number"]
+    assert r.claims["c1"].status == "warning"  # from text.written_number, no longer an error
+
+
+def test_written_out_asserted_number_not_in_span(example):
+    add_asserted(example, "twelve percent")
+    assert codes(run(example), claim="c1", number=3) == ["number.asserted", "number.not_in_span"]
+
+
+def test_blank_asserted_number_is_not_in_span(example):
+    add_asserted(example, " ")
+    assert codes(run(example), claim="c1", number=3) == ["number.asserted", "number.not_in_span"]
+
+
+def test_asserted_token_still_needs_a_token(example):
+    # "12.0%" is a token, so it must match one: the "-12.0%" token doesn't, though the text is a substring
+    replace_text(example, "b2", "]{#c1}", " (-12.0% overall)]{#c1}")
+    add_asserted(example, "12.0%")
+    r = run(example)
+    assert codes(r, claim="c1", number=3) == ["number.asserted", "number.not_in_span"]
+    assert "span.uncovered_number" in codes(r, claim="c1")
+
+
 # -- numbers outside spans ----------------------------------------------------------------
 
 
