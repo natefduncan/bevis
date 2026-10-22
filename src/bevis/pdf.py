@@ -381,14 +381,20 @@ class _Renderer:
         if len(record.rows) <= FULL_TABLE_ROWS:
             shown = keyed
         else:
-            shown = [(r, k) for r, k in keyed if k in cited.cells]
+            picked = {i for i, (_, k) in enumerate(keyed) if k in cited.cells}
+            if cited.charted:
+                # A chart cites every row it draws: after the claim-cited rows, fill
+                # the table up to the cap in record order.
+                for i in range(len(keyed)):
+                    if len(picked) >= FULL_TABLE_ROWS:
+                        break
+                    picked.add(i)
+            shown = [keyed[i] for i in sorted(picked)]
         cut = len(shown) < doc["row_count"]
 
         names = record.column_names
         if cut or len(names) > MAX_COLUMNS:
-            keep = set(record.key) | cited.claim_columns
-            if not cited.claim_columns:
-                keep |= cited.chart_columns
+            keep = set(record.key) | cited.claim_columns | cited.chart_columns
             columns = [c for c in names if c in keep]
         else:
             columns = names
@@ -401,7 +407,12 @@ class _Renderer:
         notes = []
         if cut:
             note = f"Showing {len(shown):,} of {doc['row_count']:,} rows"
-            if len(record.rows) > FULL_TABLE_ROWS:
+            if len(record.rows) > FULL_TABLE_ROWS and cited.charted:
+                if cited.cells:
+                    note += " (all are charted; the claim-cited rows and the first others are shown)"
+                else:
+                    note += f" (all are charted; the first {len(shown):,} are shown)"
+            elif len(record.rows) > FULL_TABLE_ROWS:
                 note += " (cited rows only)"
             elif len(record.rows) < doc["row_count"]:
                 note += " (the rest are not disclosed at this level)"

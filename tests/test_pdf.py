@@ -175,6 +175,46 @@ def test_uncited_large_table_shows_note(example, tmp_path):
     assert "Showing 0 of 40 rows (cited rows only)." in top
 
 
+def chart_top_accounts(example, field="segment"):
+    """Add a bar chart of q-top-accounts (40 rows) that encodes `field` and change."""
+    def fn(r):
+        r["blocks"].append({
+            "id": "b-top", "type": "chart", "caption": "Change by account",
+            "evidence": [{"id": "q-top-accounts", "version": 1}],
+            "spec": {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "data": {"evidence": {"id": "q-top-accounts", "version": 1}},
+                "mark": "bar",
+                "encoding": {"x": {"field": "account_id", "type": "nominal"},
+                             "y": {"field": "change", "type": "quantitative"},
+                             "color": {"field": field, "type": "nominal"}},
+            },
+        })
+    example.edit("report.json", fn)
+
+
+def test_large_table_keeps_chart_columns_of_a_cited_record(example, tmp_path):
+    chart_top_accounts(example)
+    top = section(plain(ast(example, tmp_path)), "q-top-accounts v1", "q-churn v1")
+    assert "3 columns not shown: account_name, rev_2024, rev_2025." in top
+    assert "segment" in top
+    # The chart cites every row: the claim-cited rows plus the first others, up to 25.
+    assert "Showing 25 of 40 rows (all are charted; the claim-cited rows and the first others are shown)." in top
+    assert "A-1042" in top and "A-1153" in top
+
+
+def test_chart_only_large_table_shows_first_rows(example, tmp_path):
+    example.edit("report.json", lambda r: r.update(claims=[c for c in r["claims"] if c["id"] not in ("c6", "c7")]))
+    chart_top_accounts(example)
+    doc = ast(example, tmp_path)
+    top = section(plain(doc), "q-top-accounts v1", "q-churn v1")
+    assert "Showing 25 of 40 rows (all are charted; the first 25 are shown)." in top
+    assert "3 columns not shown: account_name, rev_2024, rev_2025." in top
+    ids = [r[0] for r in example.read("evidence/q-top-accounts.v1.json")["rows"]]
+    assert all(i in top for i in ids[:25]) and not any(i in top for i in ids[25:])
+    assert "Cited rows and cells are in bold." not in top
+
+
 def test_wide_table_keeps_key_and_cited_columns(example, tmp_path, monkeypatch):
     monkeypatch.setattr(pdf, "MAX_COLUMNS", 3)
     seg = section(plain(ast(example, tmp_path)), "q-seg-delta v1", "q-monthly v1")

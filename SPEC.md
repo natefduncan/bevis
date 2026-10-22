@@ -796,10 +796,14 @@ Layout:
 - Appendix: one section per evidence record: SQL, result table,
   derivations, assumptions, provenance level, data hash.
 - Result tables: up to **25 rows** are shown in full. Above 25, only
-  the cited rows are shown. Cited rows and cells are bold, and a note
+  the cited rows are shown, with "cited" as in §7: a chart cites every
+  row it draws and the columns it encodes. So a charted record shows its
+  claim-cited rows and then its first other rows, 25 in all (or more, if
+  claims cite more). Rows and cells cited by claims are bold, and a note
   reads "showing X of Y rows" whenever rows are omitted. In a full table
   all columns are shown (subject to a page-width limit); when a table is
-  cut down, or too wide, the key columns and cited columns are shown.
+  cut down, or too wide, the key columns and cited columns (claim and
+  chart columns) are shown.
   The web view is not bound by this and may paginate the full table,
   subject to the disclosure level.
 - Engine: Pandoc with XeLaTeX (already installed).
