@@ -216,6 +216,9 @@ A chart block is either:
     `aggregate`, `bin`, `timeUnit`, or `impute`, because each of these
     merges or creates rows. An encoding `sort` is allowed, since it only
     orders marks.
+  - **Composite marks are refused.** A `mark` (a string or `{"type": ...}`)
+    may not be `boxplot`, `errorbar`, or `errorband`, at any depth (layers,
+    concat, facet), because each draws one mark from many rows.
   - **Top-N and derived series are done in SQL.** Vega-Lite has no limit
     transform. A chart of the top N rows cites an evidence record that
     holds those N rows (marked `partial` if it is a slice of a larger
@@ -398,6 +401,7 @@ cases.
 | Cited rows are withheld at this disclosure level | `eval.withheld` | info (unverified) |
 | Chart data is not a reference to cited evidence, or loads anything external | `chart.data` | error |
 | Chart uses a disallowed transform or encoding property (§3.6) | `chart.transform`, `chart.encoding` | error |
+| Chart uses a composite mark: `boxplot`, `errorbar`, or `errorband` (§3.6) | `chart.mark` | error |
 | Chart spec exceeds the size cap (64 KB) | `chart.size` | error |
 | Pin to an evidence version that does not exist | `pin.unknown` | error |
 | `direct` cell cites a version the claim does not pin | `pin.unpinned_cell` | error |

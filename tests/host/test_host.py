@@ -224,6 +224,20 @@ def test_chart_with_unhashable_evidence_id_is_a_finding(agent):
     assert "chart.data" in json.dumps(out)
 
 
+@pytest.mark.parametrize(
+    "mark, refused",
+    [("boxplot", True), ({"type": "errorband"}, True), ("point", False), (["boxplot"], False), ({"type": ["x"]}, False)],
+)
+def test_composite_chart_mark_is_a_finding(agent, mark, refused):
+    rid = small_report(agent)
+    pin = {"id": "q-rev-yoy", "version": 1}
+    chart = {"op": "upsert_block", "block": {
+        "id": "b2", "type": "chart", "evidence": [pin],
+        "spec": {"data": {"evidence": pin}, "layer": [{"mark": "point"}, {"mark": mark}]}}}
+    out = agent.post(f"/api/reports/{rid}/validate", {"ops": [chart]})
+    assert ("chart.mark" in json.dumps(out)) == refused
+
+
 def test_preview_stores_nothing(agent):
     rid = small_report(agent)
     out = agent.post(f"/api/reports/{rid}/validate", {"ops": [{"op": "set_title", "title": "New"}]})

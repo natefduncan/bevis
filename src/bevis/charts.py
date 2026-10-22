@@ -10,6 +10,9 @@ MAX_SPEC_BYTES = 64 * 1024  # the size cap on one serialized spec
 # Encoding properties that merge or create rows.
 FORBIDDEN_ENCODING = ("aggregate", "bin", "timeUnit", "impute")
 
+# Composite marks, which draw one mark from many rows.
+FORBIDDEN_MARKS = ("boxplot", "errorbar", "errorband")
+
 
 def data_values(spec: Any, path: str = "spec") -> Iterator[tuple[str, Any]]:
     """Every `data` value in a spec, with its location."""
@@ -96,7 +99,7 @@ def _encoding_problems(node: Any, path: str) -> Iterator[str]:
 
 
 def strictness_problems(spec: Any, path: str = "spec") -> Iterator[tuple[str, str]]:
-    """(code, message) for transforms and encodings that break the one-mark-per-row rule."""
+    """(code, message) for transforms, encodings and marks that break the one-mark-per-row rule."""
     if path == "spec":
         size = len(json.dumps(spec, separators=(",", ":")))
         if size > MAX_SPEC_BYTES:
@@ -112,6 +115,8 @@ def strictness_problems(spec: Any, path: str = "spec") -> Iterator[tuple[str, st
             elif k == "encoding":
                 for msg in _encoding_problems(v, where):
                     yield "chart.encoding", msg
+            elif k == "mark" and (mark := v.get("type") if isinstance(v, dict) else v) in FORBIDDEN_MARKS:
+                yield "chart.mark", f"{where}: {mark} marks summarize many rows in one mark"
             elif k != "data":
                 yield from strictness_problems(v, where)
     elif isinstance(spec, list):
