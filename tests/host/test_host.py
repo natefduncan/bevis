@@ -215,6 +215,15 @@ def test_bad_ops(agent, op, message):
     assert message in json.dumps(r)
 
 
+def test_chart_with_unhashable_evidence_id_is_a_finding(agent):
+    rid = small_report(agent)
+    chart = {"op": "upsert_block", "block": {
+        "id": "b2", "type": "chart", "evidence": [{"id": "q-rev-yoy", "version": 1}],
+        "spec": {"mark": "bar", "data": {"evidence": {"id": ["x"], "version": 1}}}}}
+    out = agent.post(f"/api/reports/{rid}/validate", {"ops": [chart]})
+    assert "chart.data" in json.dumps(out)
+
+
 def test_preview_stores_nothing(agent):
     rid = small_report(agent)
     out = agent.post(f"/api/reports/{rid}/validate", {"ops": [{"op": "set_title", "title": "New"}]})

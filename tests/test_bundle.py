@@ -73,6 +73,11 @@ def test_disclosure_level_mismatch(example):
         ({"values": [{"a": 1}]}, "must be {\"evidence\""),
         ({"url": "https://example.com/d.json"}, "url is not allowed"),
         ({"evidence": {"id": "q-churn", "version": 1}}, "which the block does not pin"),
+        ({"evidence": {"id": ["x"], "version": 1}}, "must be {\"evidence\""),
+        ({"evidence": {"id": {"a": 1}, "version": 1}}, "must be {\"evidence\""),
+        ({"evidence": {"id": "q-churn", "version": [1]}}, "must be {\"evidence\""),
+        ({"evidence": {"id": "q-churn", "version": "1"}}, "must be {\"evidence\""),
+        ({"evidence": {"id": "q-churn", "version": True}}, "must be {\"evidence\""),
     ],
 )
 def test_chart_data_must_be_pinned_evidence(example, data, message):

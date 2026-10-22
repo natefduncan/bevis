@@ -54,8 +54,9 @@ def data_problems(spec: dict, pins: list[dict]) -> list[str]:
     found = False
     for loc, data in data_values(spec):
         ref = data.get("evidence") if isinstance(data, dict) and set(data) == {"evidence"} else None
-        if not isinstance(ref, dict) or set(ref) != {"id", "version"}:
-            out.append(f"{loc} must be {{\"evidence\": {{\"id\", \"version\"}}}}")
+        if not (isinstance(ref, dict) and set(ref) == {"id", "version"} and isinstance(ref["id"], str)
+                and isinstance(ref["version"], int) and not isinstance(ref["version"], bool)):
+            out.append(f"{loc} must be {{\"evidence\": {{\"id\", \"version\"}}}} with a string id and an integer version")
             continue
         found = True
         if (ref["id"], ref["version"]) not in pinned:
