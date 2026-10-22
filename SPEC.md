@@ -123,8 +123,12 @@ An evidence record is **immutable and versioned**.
   `version`. A claim **pins** `(id, version)`.
 - Dedup: a run whose data hash equals the latest version's is recorded
   as a "same result" run against that version and does not create a new
-  version. If its SQL, source, or params differ from that version's, the
-  run entry flags it.
+  version. If its SQL, source, params, assumptions, `partial`,
+  `source_row_count` or key differ from that version's, the run entry
+  flags it ("assumptions changed", "partial changed", "source row count
+  changed", "key changed", like "query text changed"). The version keeps
+  its own metadata, and the `add_evidence` response note names the
+  metadata the run did not store.
 - When a newer version exists, claims pinned to older versions are
   **stale**. An agent or editor re-points them. The host re-verifies the
   claim against the new data and shows the diff (changed cells, changed

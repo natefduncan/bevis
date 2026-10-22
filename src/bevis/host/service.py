@@ -466,6 +466,9 @@ class Service:
         }
         if outcome == "same_result":
             out["note"] = f"the data matches v{version}; no new version was created"
+            kept = [f for f in flags if f.removesuffix(" changed") in {name for name, _, _ in _METADATA_FLAGS}]
+            if kept:
+                out["note"] += f" ({', '.join(kept)}: v{version} keeps its own; this run's were not stored)"
         if diff is not None:
             out["diff"] = diff
             stale = _pinned_older(draft, eid, version)
@@ -1280,7 +1283,14 @@ def _run_flags(prev: dict, doc: dict) -> list[str]:
         flags.append("source changed")
     if prev["params"] != doc["params"]:
         flags.append("params changed")
+    # Not in the data hash (or, for key, not always): a "same result" run would drop them silently.
+    flags.extend(f"{name} changed" for name, field, default in _METADATA_FLAGS
+                 if prev.get(field, default) != doc.get(field, default))
     return flags
+
+
+_METADATA_FLAGS = [("assumptions", "assumptions", []), ("partial", "partial", False),
+                   ("source row count", "source_row_count", None), ("key", "key", None)]
 
 
 def _pinned_older(draft: dict, eid: str, version: int) -> list[dict]:

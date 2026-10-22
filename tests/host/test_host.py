@@ -197,6 +197,29 @@ def test_evidence_versions_and_dedup(agent):
     assert change["after"]["value"].startswith("-0.0997")
 
 
+def test_dedup_flags_metadata_changes(agent):
+    # Same rows, different metadata: a "same result" run, flagged (SPEC §3.4).
+    rid = small_report(agent)
+    payload = example_evidence()[2]
+    runs = [
+        ({**payload, "assumptions": ["refunds included"]}, ["assumptions changed"]),
+        ({**payload, "partial": True, "source_row_count": 48211}, ["partial changed", "source row count changed"]),
+        ({**payload, "key": ["year", "revenue"]}, ["key changed"]),
+    ]
+    for body, flags in runs:
+        same = agent.post(f"/api/reports/{rid}/evidence", body)
+        assert (same["outcome"], same["version"], same["flags"]) == ("same_result", 1, flags)
+        assert all(f in same["note"] for f in flags) and "v1 keeps its own" in same["note"]
+    ev = agent.get(f"/api/reports/{rid}/evidence/q-rev-yoy")
+    assert ev["versions"] == [1]
+    assert ev["evidence"]["assumptions"] == payload["assumptions"] and "partial" not in ev["evidence"]
+    assert [r["flags"] for r in ev["runs"]] == [[], *[flags for _, flags in runs]]
+
+    # A flag-free rerun keeps the plain note.
+    same = agent.post(f"/api/reports/{rid}/evidence", payload)
+    assert (same["flags"], same["note"]) == ([], "the data matches v1; no new version was created")
+
+
 def test_create_only(agent):
     rid = small_report(agent)
     r = agent.post(f"/api/reports/{rid}/evidence", {**example_evidence()[2], "create_only": True}, expect=409)
