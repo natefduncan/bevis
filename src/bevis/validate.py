@@ -209,10 +209,11 @@ _MONTHS = (
     "|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
 )
 _ISO = re.compile(
-    r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?"
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"(?:T[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?)?"
 )
-_AFTER_MONTH = re.compile(rf"\b(?:{_MONTHS})\.?[  ]+$")
-_BEFORE_MONTH = re.compile(rf"^[  ]+(?:{_MONTHS})\b")
+_AFTER_MONTH = re.compile(rf"(?<![A-Za-z0-9_])(?:{_MONTHS})\.?[  ]+$")
+_BEFORE_MONTH = re.compile(rf"^[  ]+(?:{_MONTHS})(?![A-Za-z0-9_])")
 
 
 def is_year(d: Displayed) -> bool:

@@ -316,8 +316,9 @@ The validator parses the number as displayed and its precision, then
 compares to the evaluated value:
 
 - Parsed forms: thousands separators, `$`, `%`, suffixes `K` `M` `B`
-  (case-insensitive), and negatives written with `-` or `−`. The exact
-  token pattern is in `spec/expr/README.md`, with cases in
+  (case-insensitive), and negatives written with `-` or `−`. Digits are
+  ASCII `0`–`9` only, here and in the year and date rules of §5. The
+  exact token pattern is in `spec/expr/README.md`, with cases in
   `spec/expr/matching.json`.
 - Compare `round_half_up(value scaled to the displayed unit, displayed
   decimals)` to the displayed number. `$4.21M` matches 4,210,000 and does

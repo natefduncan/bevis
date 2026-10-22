@@ -111,16 +111,20 @@ A **numeric token** in text is read with this pattern (Python `re.X`
 syntax):
 
 ```
-(?<![\w.])                         not glued to a word or a decimal point
-(?P<sign>[+\-−](?=\$?\d))?         explicit sign, before the number or its $
+(?<![A-Za-z0-9_.])                        not glued to a word or a decimal point
+(?P<sign>[+\-−](?=\$?[0-9]))?             explicit sign, before the number or its $
 (?P<cur>\$)?
-(?P<int>\d{1,3}(?:,\d{3})+|\d+)    thousands separators, or none
-(?P<frac>\.\d+)?
-(?!\d)
+(?P<int>[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)  thousands separators, or none
+(?P<frac>\.[0-9]+)?
+(?![0-9])
 (?P<suffix>%|[KkMmBb](?![A-Za-z]))?
 (?P<tail>[A-Za-z]+)?
 ```
 
+- Every class is ASCII. Only `0`–`9` are digits, so text in other
+  digits (`٣٠`, `１２%`) holds no token and no claim number can be written
+  in them. A letter or digit outside ASCII does not glue to a token
+  either: `é5` holds the token `5`.
 - A token with a `tail` (`3rd`, `10am`, `4.2bn`) is a number but is not
   parsed, so it cannot be matched.
 - `Q4`, `FY2025`, and `v1` are not tokens, because a letter comes right

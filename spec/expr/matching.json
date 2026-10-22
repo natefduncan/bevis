@@ -16,7 +16,11 @@
     { "text": "5m users, 2B, 7k", "tokens": ["5m", "2B", "7k"] },
     { "text": "version 1.2.3", "tokens": ["1.2"] },
     { "text": "3+ years", "tokens": ["3"] },
-    { "text": "(12%)", "tokens": ["12%"] }
+    { "text": "(12%)", "tokens": ["12%"] },
+    { "text": "revenue ٣٠ units", "tokens": [], "note": "Arabic-Indic digits: only ASCII 0-9 are digits" },
+    { "text": "１２% and ＄４.２１M", "tokens": [], "note": "full-width digits" },
+    { "text": "in २०२५", "tokens": [], "note": "Devanagari digits" },
+    { "text": "café5 and ٣5", "tokens": ["5", "5"], "note": "non-ASCII letters and digits do not glue to a token" }
   ],
   "cases": [
     { "display": "$4.21M", "value": "4210000", "match": true },
@@ -47,6 +51,8 @@
     { "display": "twelve percent", "value": "0.12", "match": null },
     { "display": "3rd", "value": "3", "match": null },
     { "display": "1.2.3", "value": "1.2", "match": null },
-    { "display": "$-1.2M", "value": "-1200000", "match": null }
+    { "display": "$-1.2M", "value": "-1200000", "match": null },
+    { "display": "٣٠", "value": "30", "match": null, "note": "Arabic-Indic digits" },
+    { "display": "１２%", "value": "0.12", "match": null, "note": "full-width digits" }
   ]
 }

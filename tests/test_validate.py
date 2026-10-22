@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from bevis import validate as validate_mod
 from bevis.evidence import Record
 from bevis.validate import Subject, analyze_text, loose_numbers, validate
 
@@ -319,6 +320,12 @@ def test_heading_and_caption_numbers(example):
 )
 def test_loose_numbers(text, loose):
     assert [d.text for d in loose_numbers(text)] == loose
+
+
+def test_dates_use_ascii_digits():
+    assert validate_mod._ISO.fullmatch("2025-03-01T10:00:00Z")
+    assert validate_mod._ISO.search("\uff12\uff10\uff12\uff15-\uff10\uff13-\uff10\uff11") is None
+    assert validate_mod._ISO.search("\u0662\u0660\u0662\u0665-\u0660\u0663-\u0660\u0661") is None
 
 
 def test_code_is_ignored():

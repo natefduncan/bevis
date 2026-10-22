@@ -12,12 +12,12 @@ from ._spec import spec_dir
 
 _TOKEN = re.compile(
     r"""
-    (?<![\w.])                              # not glued to a word or a decimal point
-    (?P<sign>[+\-−](?=\$?\d))?         # explicit sign, before the number or its $
+    (?<![A-Za-z0-9_.])                      # not glued to a word or a decimal point
+    (?P<sign>[+\-−](?=\$?[0-9]))?          # explicit sign, before the number or its $
     (?P<cur>\$)?
-    (?P<int>\d{1,3}(?:,\d{3})+|\d+)         # thousands separators, or none
-    (?P<frac>\.\d+)?
-    (?!\d)
+    (?P<int>[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)  # thousands separators, or none
+    (?P<frac>\.[0-9]+)?
+    (?![0-9])
     (?P<suffix>%|[KkMmBb](?![A-Za-z]))?
     (?P<tail>[A-Za-z]+)?                    # "3rd", "10am", "4.2bn": a number, but not one we parse
     """,
