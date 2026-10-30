@@ -556,7 +556,11 @@ class Service:
         missing = sorted(export.pins_of(content) - set(docs))
         if missing:
             eid, ver = missing[0]
-            raise HostError(409, "missing_evidence", f"{eid} v{ver} is pinned but does not exist")
+            raise HostError(409, "missing_evidence",
+                            f"{eid} v{ver} is pinned but does not exist (pin.unknown, published with an override), "
+                            "and a bundle must list every version its report pins. "
+                            "Fix the pin and publish a new version to export it.",
+                            {"missing": [{"id": e, "version": v} for e, v in missing]})
         return docs
 
     # -- edits ------------------------------------------------------------------------------

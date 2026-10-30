@@ -71,7 +71,10 @@ agent (local/sandbox) --evidence + edits--> host API --> SQLite (source of truth
   not copies).
 - Publishing is blocked if validation **errors** exist, unless the
   publisher overrides. The override and its reason are recorded on the
-  version. Warnings never block.
+  version. Warnings never block. A version published with an override
+  over `pin.unknown` can be read and challenged (the missing pins are
+  skipped), but it cannot be exported: a bundle must list every version
+  its report pins, so exports return 409 `missing_evidence`.
 - There is no separate "frozen" state. Published versions are inherently
   immutable.
 

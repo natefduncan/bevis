@@ -247,3 +247,4 @@ def test_override_over_an_unknown_pin(host, agent, report):
     for fmt in ("zip", "html", "pdf"):
         r = commenter.get(f"/api/reports/{report}/export.{fmt}", expect=409)
         assert r["error"]["code"] == "missing_evidence"
+        assert "override" in r["error"]["message"] and "q-missing" in r["error"]["message"]
