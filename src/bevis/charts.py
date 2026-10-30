@@ -10,6 +10,10 @@ MAX_SPEC_BYTES = 64 * 1024  # the size cap on one serialized spec
 # Encoding properties that merge or create rows.
 FORBIDDEN_ENCODING = ("aggregate", "bin", "timeUnit", "impute")
 
+# Channels that place a mark; a constant there draws data that is not from evidence.
+POSITIONAL_CHANNELS = ("x", "y", "x2", "y2", "xOffset", "yOffset", "theta", "theta2", "radius", "radius2",
+                       "latitude", "latitude2", "longitude", "longitude2")
+
 # Composite marks, which draw one mark from many rows.
 FORBIDDEN_MARKS = ("boxplot", "errorbar", "errorband")
 
@@ -86,16 +90,21 @@ def data_problems(spec: dict, pins: list[dict]) -> list[str]:
     return out
 
 
-def _encoding_problems(node: Any, path: str) -> Iterator[str]:
+def _encoding_problems(node: Any, path: str, top: bool = True) -> Iterator[str]:
     if isinstance(node, dict):
+        if top:
+            for ch in POSITIONAL_CHANNELS:
+                if isinstance(node.get(ch), dict) and ("datum" in node[ch] or "value" in node[ch]):
+                    lit = "datum" if "datum" in node[ch] else "value"
+                    yield f"{path}.{ch}: a {lit} literal on a position channel draws data that is not evidence"
         for k, v in node.items():
             if k in FORBIDDEN_ENCODING and v not in (None, False):
                 yield f"{path}.{k}: encodings may not set {k}, which merges or creates rows"
             else:
-                yield from _encoding_problems(v, f"{path}.{k}")
+                yield from _encoding_problems(v, f"{path}.{k}", False)
     elif isinstance(node, list):
         for i, v in enumerate(node):
-            yield from _encoding_problems(v, f"{path}[{i}]")
+            yield from _encoding_problems(v, f"{path}[{i}]", False)
 
 
 def strictness_problems(spec: Any, path: str = "spec") -> Iterator[tuple[str, str]]:

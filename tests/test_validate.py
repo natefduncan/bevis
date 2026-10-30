@@ -367,6 +367,9 @@ def test_stale_pin(example):
         (lambda s: s["encoding"]["y"].update(aggregate="sum"), "chart.encoding"),
         (lambda s: s["encoding"]["x"].update(timeUnit="year"), "chart.encoding"),
         (lambda s: s["encoding"].update(tooltip=[{"field": "revenue", "bin": True}]), "chart.encoding"),
+        (lambda s: s["encoding"].update(y={"datum": 100}), "chart.encoding"),
+        (lambda s: s["encoding"].update(x2={"value": 5}), "chart.encoding"),
+        (lambda s: s.update(layer=[{"mark": "rule", "encoding": {"y": {"datum": 0}}}]), "chart.encoding"),
         (lambda s: s.update(description="x" * 70000), "chart.size"),
         (lambda s: s.update(mark="boxplot"), "chart.mark"),
         (lambda s: s.update(mark={"type": "errorbar", "extent": "ci"}), "chart.mark"),
@@ -388,6 +391,7 @@ def test_chart_strictness(example, change, code):
         lambda s: s["encoding"]["y"].update(bin=False),
         lambda s: s.update(layer=[{"mark": "bar"}, {"mark": "text"}]),
         lambda s: s.update(mark={"type": "bar", "tooltip": True}),
+        lambda s: s["encoding"].update(color={"value": "red"}, opacity={"datum": 0.5}),
         lambda s: s.update(config={"mark": {"color": "red"}, "boxplot": {"extent": 1.5}}),
     ],
 )

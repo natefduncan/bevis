@@ -221,7 +221,11 @@ A chart block is either:
     which drops rows unpredictably.
   - **Encodings are checked too.** An encoding channel may not set
     `aggregate`, `bin`, `timeUnit`, or `impute`, because each of these
-    merges or creates rows. An encoding `sort` is allowed, since it only
+    merges or creates rows. A position channel (`x`, `y`, `x2`, `y2`,
+    `xOffset`, `yOffset`, `theta`, `radius`, `latitude`, `longitude`, and
+    their `2` variants) may not take a `datum` or `value` literal, since a
+    constant there draws data that is not evidence. Literals on other
+    channels, such as a fixed `color`, stay allowed. An encoding `sort` is allowed, since it only
     orders marks.
   - **Composite marks are refused.** A `mark` (a string or `{"type": ...}`)
     may not be `boxplot`, `errorbar`, or `errorband`, at any depth (layers,
@@ -408,7 +412,7 @@ cases.
 | Expression fails to evaluate, or cited cell does not exist in the pinned version, or key count/coercion fails | `eval.<code>` (codes in `spec/expr/README.md`) | error |
 | Cited rows are withheld at this disclosure level | `eval.withheld` | info (unverified) |
 | Chart data is not a reference to cited evidence, or loads anything external | `chart.data` | error |
-| Chart uses a disallowed transform or encoding property (§3.6) | `chart.transform`, `chart.encoding` | error |
+| Chart uses a disallowed transform or encoding property, or a `datum`/`value` literal on a position channel (§3.6) | `chart.transform`, `chart.encoding` | error |
 | Chart uses a composite mark: `boxplot`, `errorbar`, or `errorband` (§3.6) | `chart.mark` | error |
 | Chart spec exceeds the size cap (64 KB) | `chart.size` | error |
 | Pin to an evidence version that does not exist | `pin.unknown` | error |
