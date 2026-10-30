@@ -116,3 +116,13 @@ def test_image_must_be_in_assets(example):
     example.edit("report.json", lambda r: r["blocks"].append(
         {"id": "b9", "type": "image", "src": "assets/missing.png", "alt": "x", "evidence": []}))
     assert "is not a file in assets/" in problems(example)
+
+
+def test_withheld_columns_are_not_listed_or_keys(example):
+    example.restrict("cited")
+    name = example.read("evidence/q-top-accounts.v1.json")["columns"][1]["name"]
+    example.edit("evidence/q-top-accounts.v1.json",
+                 lambda d: d["disclosure"].update(withheld_columns=[name, d["key"][0]]))
+    text = problems(example)
+    assert f"withheld column {name!r} is also listed" in text
+    assert "key column" in text and "cannot be withheld" in text

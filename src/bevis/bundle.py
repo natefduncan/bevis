@@ -203,9 +203,17 @@ def _check_disclosure(where: str, doc: dict, record: Record, level: str) -> list
             out.append(f"{where}: data_hash does not match the rows (recomputed {record.compute_hash()})")
         return out
     # cited
+    out = []
     if withheld != doc["row_count"] - len(rows):
-        return [f"{where}: withheld_rows is {withheld}, expected {doc['row_count'] - len(rows)}"]
-    return []
+        out.append(f"{where}: withheld_rows is {withheld}, expected {doc['row_count'] - len(rows)}")
+    # The full column list isn't known here, so only the checkable part of rule 7.
+    listed = {c["name"] for c in doc["columns"]}
+    for name in doc["disclosure"].get("withheld_columns") or []:
+        if name in listed:
+            out.append(f"{where}: withheld column {name!r} is also listed in columns")
+        if name in doc["key"]:
+            out.append(f"{where}: key column {name!r} cannot be withheld")
+    return out
 
 
 def resolve_direct(bundle: Bundle, cell: dict):

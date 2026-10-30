@@ -218,3 +218,13 @@ def test_types_override(client):
                           key=["k"], sql="SELECT ...", source="x")
     assert out["outcome"] == "created"
     assert to_evidence(["k", "amount"], [["a", "12.30"]], {"amount": "decimal"})[1] == [["a", "12.3"]]
+
+
+def test_float_subclass_with_a_type_name_in_its_repr():
+    from bevis.client import encode
+
+    class F(float):
+        def __repr__(self):
+            return f"F({float.__repr__(self)})"  # like numpy 2's np.float64(0.1)
+
+    assert encode(F(0.1), "decimal") == "0.1"

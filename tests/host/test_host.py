@@ -648,6 +648,8 @@ def test_link_expiry(host, agent):
     r = admin.post(f"/api/reports/{rid}/links", {"role": "reader", "name": "x", "expires_at": "tomorrow"},
                    expect=422)
     assert "expires_at" in r["error"]["message"]
+    admin.post(f"/api/reports/{rid}/links", {"role": "reader", "name": "x", "expires_at": "2026-02-31T00:00:00Z"},
+               expect=422)
     expired = admin.post(f"/api/reports/{rid}/links",
                          {"role": "reader", "name": "x", "expires_at": "2000-01-01T00:00:00Z"}, expect=201)
     Api(host, expired["secret"]).get(f"/api/reports/{rid}", expect=401)

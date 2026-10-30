@@ -378,6 +378,7 @@ async function inlineData(node, refs) {
 async function drawChart(el, block) {
   const spec = structuredClone(block.spec);
   const refs = [];
+  stripLinks(spec); // before inlining: data columns named href are not channels
   try {
     await inlineData(spec, refs);
   } catch (err) {
@@ -386,7 +387,6 @@ async function drawChart(el, block) {
       : `Chart not drawn: ${err.message}` }));
     return;
   }
-  stripLinks(spec);
   spec.width = spec.width === undefined ? "container" : spec.width;
   try {
     const result = await vegaEmbed(el, spec, {

@@ -73,6 +73,7 @@ def encode(value: Any, type_: str) -> Any:
         return _integer(value)
     if type_ == "decimal":
         if isinstance(value, float):
+            value = float(value)  # numpy floats too: numpy 2's repr is "np.float64(0.1)"
             if value != value or value in (float("inf"), float("-inf")):
                 raise ValueError(f"{value} is not a decimal")
             value = Decimal(repr(value))  # the float's shortest exact-looking form, e.g. 0.1 not 0.1000000000000000055

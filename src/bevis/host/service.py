@@ -16,6 +16,7 @@ import threading
 import zlib
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,17 @@ from .db import Database, dumps, loads, now
 
 SLUG = re.compile(r"[a-z][a-z0-9-]{2,63}")
 TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+
+
+def _is_utc_time(text) -> bool:
+    """A real UTC time in the stored form: the regex alone lets 2026-02-31 through."""
+    if not (isinstance(text, str) and TIMESTAMP.fullmatch(text)):
+        return False
+    try:
+        datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return True
 EVIDENCE_FIELDS = {
     "id", "source", "sql", "params", "assumptions", "key", "columns", "rows",
     "run_at", "partial", "source_row_count", "create_only",
@@ -1024,7 +1036,7 @@ class Service:
                 raise HostError(422, "invalid", "author_kind is human or agent")
             if not isinstance(name, str) or not name.strip():
                 raise HostError(422, "invalid", "a link needs a name (whose link it is)")
-            if expires_at is not None and not (isinstance(expires_at, str) and TIMESTAMP.fullmatch(expires_at)):
+            if expires_at is not None and not _is_utc_time(expires_at):
                 # Expiry is compared as text against now(), so it must be in the same UTC form.
                 raise HostError(422, "invalid", "expires_at is a UTC time like 2026-12-31T23:59:59Z")
             if RANK[role] >= RANK["suggester"]:
