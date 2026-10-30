@@ -37,7 +37,10 @@ class Record:
     columns: list[tuple[str, str]]  # (name, type), in declared order
     rows: list[list[Value]] | None  # None when withheld (metadata disclosure)
     raw: dict = field(repr=False, default_factory=dict)
+    # (row position, column position) of cells the disclosure level withholds; their stored value is null.
+    withheld_cells: frozenset = frozenset()
     _index: dict = field(init=False, repr=False, default_factory=dict)
+    _position: dict = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         names = [c for c, _ in self.columns]
@@ -53,11 +56,12 @@ class Record:
         if not self.key and len(self.rows) > 1:
             raise EvidenceError(f"{self.id}: an empty key is allowed only for a single row")
         idx = self.key_indexes
-        for row in self.rows:
+        for n, row in enumerate(self.rows):
             k = values.key_tuple([row[i] for i in idx])
             if k in self._index:
                 raise EvidenceError(f"{self.id}: key is not unique (duplicate {list(k)})")
             self._index[k] = row
+            self._position[k] = n
 
     @property
     def column_names(self) -> list[str]:
@@ -90,6 +94,12 @@ class Record:
                     rows.append([values.from_json(t, v) for (_, t), v in zip(columns, raw_row)])
                 except BadValue as e:
                     raise EvidenceError(f"{doc['id']}: row {n}: {e}") from e
+        names = [n for n, _ in columns]
+        withheld = set()
+        for row_no, name in (doc.get("disclosure") or {}).get("withheld_cells") or []:
+            if rows is None or not 0 <= row_no < len(rows) or name not in names:
+                raise EvidenceError(f"{doc['id']}: withheld cell [{row_no}, {name!r}] is not a cell of the rows")
+            withheld.add((row_no, names.index(name)))
         return cls(
             id=doc["id"],
             version=doc.get("version", 1),
@@ -97,6 +107,7 @@ class Record:
             columns=columns,
             rows=rows,
             raw=doc,
+            withheld_cells=frozenset(withheld),
         )
 
     def compute_hash(self) -> str:
@@ -142,7 +153,15 @@ class Record:
         row = self._index.get(key)
         if row is None:
             raise LookupFailed("missing_row", f"{self.id} has no row with key {list(key)}")
-        return row[self.column_names.index(column)]
+        col = self.column_names.index(column)
+        if (self._position[key], col) in self.withheld_cells:
+            raise LookupFailed("withheld", f"{self.id}: {column!r} at {list(key)} is not disclosed at this level")
+        return row[col]
+
+    def is_withheld(self, key: tuple[str | None, ...], column: str) -> bool:
+        """Whether this cell exists but its value was withheld (stored as null)."""
+        pos = self._position.get(key)
+        return pos is not None and (pos, self.column_names.index(column)) in self.withheld_cells
 
 
 def coerce_literal(lit: KeyLiteral, type_: str, column: str) -> Value:

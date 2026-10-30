@@ -410,7 +410,7 @@ cases.
 | Cited cell is null or not numeric | `number.non_numeric` | error |
 | Expression fails to parse | `expr.parse` | error |
 | Expression fails to evaluate, or cited cell does not exist in the pinned version, or key count/coercion fails | `eval.<code>` (codes in `spec/expr/README.md`) | error |
-| Cited rows are withheld at this disclosure level | `eval.withheld` | info (unverified) |
+| Cited rows or cells are withheld at this disclosure level | `eval.withheld` | info (unverified) |
 | Chart data is not a reference to cited evidence, or loads anything external | `chart.data` | error |
 | Chart uses a disallowed transform or encoding property, or a `datum`/`value` literal on a position channel (§3.6) | `chart.transform`, `chart.encoding` | error |
 | Chart uses a composite mark: `boxplot`, `errorbar`, or `errorband` (§3.6) | `chart.mark` | error |
@@ -541,7 +541,7 @@ sent to the browser):
 | Level | Includes |
 |---|---|
 | `full` | all stored rows |
-| `cited` | only rows and columns that claims reference, plus SQL and metadata. A chart references every row it draws and the columns it encodes |
+| `cited` | only the cells that claims reference, plus SQL and metadata. A chart references every row it draws and the columns it encodes, so those columns stay whole. A cell that a claim cites in one row is not sent for the other rows; it is listed in `disclosure.withheld_cells` and sent as null |
 | `metadata` | SQL, row counts, derivations, assumptions, no data values. Computed values are withheld too; expressions stay |
 
 Disclosure applies to the web view, API responses, and exports.
@@ -786,7 +786,10 @@ bundle/
 ```
 
 At `cited` level, `rows` contains only referenced rows and columns, and
-`disclosure.withheld_rows` records how many were omitted. At `metadata`
+`disclosure.withheld_rows` records how many were omitted. Within a kept
+row, a kept column that nothing cites in that row is sent as null and
+listed in `disclosure.withheld_cells` as `[row_index, column_name]`. A
+reader treats a listed cell as withheld, not as null. At `metadata`
 level, `rows` is omitted.
 
 ### 10.4 PDF rendering (first deliverable)

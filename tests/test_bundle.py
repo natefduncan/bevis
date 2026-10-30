@@ -126,3 +126,49 @@ def test_withheld_columns_are_not_listed_or_keys(example):
     text = problems(example)
     assert f"withheld column {name!r} is also listed" in text
     assert "key column" in text and "cannot be withheld" in text
+
+
+def _cited_with_cells(example):
+    """The cited bundle with a withheld cell planted in a charted record."""
+    example.restrict("cited")
+    path = "evidence/q-monthly.v1.json"
+    doc = example.read(path)
+    assert "withheld_cells" not in doc["disclosure"]
+    return path, doc
+
+
+def test_withheld_cell_must_be_null_unique_and_not_a_key(example):
+    path, doc = _cited_with_cells(example)
+    name = next(c["name"] for c in doc["columns"] if c["name"] not in doc["key"])
+    example.edit(path, lambda d: d["disclosure"].update(
+        withheld_cells=[[0, name], [0, name], [1, doc["key"][0]]]))
+    text = problems(example)
+    assert "must be null" in text and "listed twice" in text
+    assert "key column" in text
+
+
+def test_withheld_cell_outside_the_rows(example):
+    path, doc = _cited_with_cells(example)
+    name = next(c["name"] for c in doc["columns"] if c["name"] not in doc["key"])
+    example.edit(path, lambda d: d["disclosure"].update(withheld_cells=[[999, name]]))
+    assert "is not a cell of the rows" in problems(example)
+
+
+def test_withheld_cell_that_is_null_loads(example):
+    path, doc = _cited_with_cells(example)
+    name = next(c["name"] for c in doc["columns"] if c["name"] not in doc["key"])
+    idx = [c["name"] for c in doc["columns"]].index(name)
+
+    def plant(d):
+        d["rows"][0][idx] = None
+        d["disclosure"]["withheld_cells"] = [[0, name]]
+    example.edit(path, plant)
+    assert example.load().record("q-monthly", 1).is_withheld(
+        tuple(example.load().record("q-monthly", 1).rows[0][i].canonical() for i in
+              example.load().record("q-monthly", 1).key_indexes), name)
+
+
+def test_nothing_is_withheld_at_full_disclosure_by_cell(example):
+    name = example.read("evidence/q-churn.v1.json")["columns"][-1]["name"]
+    example.edit("evidence/q-churn.v1.json", lambda d: d["disclosure"].update(withheld_cells=[[0, name]]))
+    assert "nothing may be withheld at full disclosure" in problems(example)

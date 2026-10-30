@@ -1134,7 +1134,8 @@ def _check_target(content: dict, target: Any) -> None:
 def _cell_visible(cell: dict, records: dict) -> bool:
     record = records.get((cell["evidence"], cell["version"]))
     return (record is not None and cell["column"] in record.column_names and record.rows is not None
-            and record.row(tuple(cell["key"])) is not None)
+            and record.row(tuple(cell["key"])) is not None
+            and not record.is_withheld(tuple(cell["key"]), cell["column"]))
 
 
 def _check_cell(cell: Any, records: dict) -> dict:

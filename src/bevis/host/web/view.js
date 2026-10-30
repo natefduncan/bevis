@@ -562,6 +562,7 @@ function resultTable(doc, rowKeys, cells, focusRow, ident, marks = []) {
     }
   });
   const withheld = doc.disclosure?.withheld_rows || 0;
+  const withheldCells = new Set((doc.disclosure?.withheld_cells || []).map(([i, name]) => `${i}\u0000${name}`));
   const marked = new Set(marks.map(selKey)); // cells a challenge points at
   for (const m of marks) {
     rowKeys.forEach((key, i) => { if (sameKey(key, m.key) && !citedRows.has(i)) citedRows.set(i, new Set()); });
@@ -584,12 +585,13 @@ function resultTable(doc, rowKeys, cells, focusRow, ident, marks = []) {
           const name = cols[j];
           const cell = { evidence: ident.id, version: ident.version, key: rowKeys[i], column: name };
           const k = selKey(cell);
-          const cls = [numeric.has(name) ? "num" : "", v === null ? "null" : "", citedCols?.has(name) ? "cited-cell" : "",
+          const hidden = withheldCells.has(`${i}\u0000${name}`);
+          const cls = [numeric.has(name) ? "num" : "", hidden ? "withheld" : v === null ? "null" : "", citedCols?.has(name) ? "cited-cell" : "",
             marked.has(k) ? "challenged-cell" : "", state.compose?.cells.has(k) ? "selected-cell" : ""];
           return h("td", {
             class: cls.join(" ").trim() || null,
-            text: v === null ? "null" : String(v),
-            onclick: state.compose ? (e) => toggleCell(e.currentTarget, cell) : null,
+            text: hidden ? "withheld" : v === null ? "null" : String(v),
+            onclick: state.compose && !hidden ? (e) => toggleCell(e.currentTarget, cell) : null,
           });
         }));
     }));

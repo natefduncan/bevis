@@ -190,14 +190,17 @@ def _check_disclosure(where: str, doc: dict, record: Record, level: str) -> list
     rows = doc.get("rows")
     withheld = doc["disclosure"]["withheld_rows"]
     if level == "metadata":
-        return [f"{where}: rows must be absent at metadata disclosure"] if rows is not None else []
+        out = [f"{where}: rows must be absent at metadata disclosure"] if rows is not None else []
+        if doc["disclosure"].get("withheld_cells"):
+            out.append(f"{where}: withheld_cells needs rows, and there are none at metadata disclosure")
+        return out
     if rows is None:
         return [f"{where}: rows are required at {level} disclosure"]
     if level == "full":
         out = []
         if len(rows) != doc["row_count"]:
             out.append(f"{where}: row_count is {doc['row_count']} but {len(rows)} rows are present")
-        if withheld or doc["disclosure"].get("withheld_columns"):
+        if withheld or doc["disclosure"].get("withheld_columns") or doc["disclosure"].get("withheld_cells"):
             out.append(f"{where}: nothing may be withheld at full disclosure")
         if not out and record.compute_hash() != doc["data_hash"]:
             out.append(f"{where}: data_hash does not match the rows (recomputed {record.compute_hash()})")
@@ -213,6 +216,20 @@ def _check_disclosure(where: str, doc: dict, record: Record, level: str) -> list
             out.append(f"{where}: withheld column {name!r} is also listed in columns")
         if name in doc["key"]:
             out.append(f"{where}: key column {name!r} cannot be withheld")
+    seen = set()
+    names = [c["name"] for c in doc["columns"]]
+    for cell in doc["disclosure"].get("withheld_cells") or []:
+        row_no, name = cell
+        if not 0 <= row_no < len(rows) or name not in names:
+            out.append(f"{where}: withheld cell {cell} is not a cell of the rows")
+            continue
+        if name in doc["key"]:
+            out.append(f"{where}: key column {name!r} cannot be withheld in row {row_no}")
+        if rows[row_no][names.index(name)] is not None:
+            out.append(f"{where}: withheld cell [{row_no}, {name!r}] must be null")
+        if (row_no, name) in seen:
+            out.append(f"{where}: withheld cell [{row_no}, {name!r}] is listed twice")
+        seen.add((row_no, name))
     return out
 
 

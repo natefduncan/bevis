@@ -421,6 +421,8 @@ class _Renderer:
             notes.append(f"{plural(hidden, 'column')} not shown: {', '.join(n for n in names if n not in columns)}.")
         if withheld_cols:
             notes.append(f"Not disclosed at this level: {', '.join(withheld_cols)}.")
+        if record.withheld_cells:
+            notes.append("*withheld* marks a cell that is not disclosed at this level.")
         if cited.cells:
             notes.append("Cited rows and cells are in bold.")
 
@@ -439,6 +441,8 @@ class _Renderer:
                 name = names[i]
                 text = _display(row[i])
                 text = "*null*" if row[i].is_null else esc(text)
+                if record.is_withheld(key, name):
+                    text = "*withheld*"
                 if key in cited.cells and (name in bold or name in record.key):
                     text = f"**{text}**"
                 cells.append(text)

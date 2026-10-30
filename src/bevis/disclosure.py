@@ -17,6 +17,8 @@ def restrict(report: dict, docs: dict[Ident, dict], level: str) -> dict[Ident, d
 
     At `cited`, a record keeps the rows and columns claims cite. A chart cites
     every row it draws and the columns it encodes. Key columns always stay.
+    Within a kept row, a kept column that nothing cites in that row is withheld
+    cell by cell: its value becomes null and `disclosure.withheld_cells` lists it.
     """
     out = {ident: copy.deepcopy(doc) for ident, doc in docs.items()}
     for doc in out.values():
@@ -37,10 +39,16 @@ def restrict(report: dict, docs: dict[Ident, dict], level: str) -> dict[Ident, d
         names = record.column_names
         keep = [n for n in names if n in set(record.key) | c.claim_columns | c.chart_columns]
         rows = []
+        withheld_cells = []
+        always = set(record.key) | c.chart_columns
         for raw, typed in zip(doc["rows"], record.rows or []):
             key = tuple(typed[i].canonical() for i in record.key_indexes)
             if c.charted or key in c.cells:
-                rows.append([raw[names.index(n)] for n in keep])
+                allowed = always | c.cells.get(key, set())
+                for j, n in enumerate(keep):
+                    if n not in allowed:
+                        withheld_cells.append([len(rows), n])
+                rows.append([raw[names.index(n)] if n in allowed else None for n in keep])
         doc["columns"] = [col for col in doc["columns"] if col["name"] in keep]
         doc["rows"] = rows
         doc["disclosure"] = {
@@ -48,4 +56,6 @@ def restrict(report: dict, docs: dict[Ident, dict], level: str) -> dict[Ident, d
             "withheld_rows": doc["row_count"] - len(rows),
             "withheld_columns": [n for n in names if n not in keep],
         }
+        if withheld_cells:
+            doc["disclosure"]["withheld_cells"] = withheld_cells
     return out

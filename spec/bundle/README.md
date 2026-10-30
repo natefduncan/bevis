@@ -33,8 +33,14 @@ that breaks any of them.
 7. At `cited` disclosure, `rows` holds a subset of rows and `columns` a
    subset of columns. The subset always includes the key columns.
    `disclosure.withheld_rows` is `row_count - len(rows)`.
-   `disclosure.withheld_columns` names the dropped columns. The hash
-   cannot be rechecked and is carried as recorded.
+   `disclosure.withheld_columns` names the dropped columns. A kept row
+   may still lack a kept column's value: `disclosure.withheld_cells` lists
+   those cells as `[row_index, column_name]`, with `row_index` counting
+   `rows` from 0. Each listed cell is null in `rows`, is listed once, and is
+   not in a key column. A reader treats a listed cell as withheld, not as a
+   null value. Reading it is `eval.withheld`. Nothing is listed at `full`
+   or `metadata` disclosure. The hash cannot be rechecked and is carried
+   as recorded.
 8. At `metadata` disclosure, `rows` is absent.
 9. Chart specs carry no inline data and no URLs. Every `data` object in the
    spec, including in layers, is `{"evidence": {"id", "version"}}`, and the

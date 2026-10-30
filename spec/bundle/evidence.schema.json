@@ -50,7 +50,16 @@
       "properties": {
         "level": { "$ref": "common.schema.json#/$defs/disclosure_level" },
         "withheld_rows": { "type": "integer", "minimum": 0 },
-        "withheld_columns": { "type": "array", "items": { "type": "string" } }
+        "withheld_columns": { "type": "array", "items": { "type": "string" } },
+        "withheld_cells": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [{ "type": "integer", "minimum": 0 }, { "type": "string" }],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
       }
     }
   },

@@ -271,7 +271,7 @@ table.rows td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.rows th.num { text-align: right; }
 table.rows tr.cited td { background: color-mix(in srgb, var(--cited) 45%, transparent); }
 table.rows td.cited-cell { background: var(--cited); font-weight: 700; }
-table.rows td.null { color: var(--muted); font-style: italic; }
+table.rows td.null, table.rows td.withheld { color: var(--muted); font-style: italic; }
 table.rows tr.focus td { box-shadow: inset 0 2px var(--accent), inset 0 -2px var(--accent); }
 .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 6px; color: var(--muted); font-size: 13px; }
 .pager button { padding: 2px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; }
