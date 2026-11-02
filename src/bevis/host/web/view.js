@@ -27,6 +27,8 @@ const state = {
   role: null,
   challenges: [], // as seen from the shown version
   compose: null, // {target, cells: Map(selKey -> cell)} while writing a challenge
+  editing: new Map(), // block id -> editor state, for blocks open for editing (SPEC §6.2)
+  flash: null, // {block, text}: a note shown once, after a save
 };
 
 const atLeast = (role) => ROLES.indexOf(state.role) >= ROLES.indexOf(role);
@@ -108,6 +110,8 @@ async function api(path, { method = "GET", body } = {}) {
   if (!res.ok) {
     const err = new Error(data?.error?.message || `request failed (${res.status})`);
     err.status = res.status;
+    err.code = data?.error?.code;
+    err.details = data?.error?.details;
     throw err;
   }
   return data;
@@ -338,10 +342,22 @@ async function renderReport() {
     } else {
       el = h("p", { class: "notice", text: `Unsupported block type: ${block.type}` });
     }
+    if (state.editing.has(block.id) && canEditBlock(block)) el = blockEditor(block);
     el.id = `blk-${block.id}`;
     el.dataset.block = block.id;
     root.append(el);
+    if (canEditBlock(block) && !state.editing.has(block.id)) {
+      root.append(h("div", { class: "edit-row" },
+        h("button", { class: "quiet edit-block", type: "button", text: "Edit",
+          "aria-label": `Edit ${block.type === "heading" ? "heading" : "paragraph"} ${block.id}`,
+          onclick: () => openEditor(block) })));
+    }
+    if (state.flash?.block === block.id) {
+      root.append(h("div", { class: "notice flash", role: "status", text: state.flash.text }));
+      state.flash = null;
+    }
   });
+  state.flash = null;
   markFlaggedBlocks();
   await Promise.all(charts.map(([el, block]) => drawChart(el, block)));
 }
@@ -1019,6 +1035,183 @@ function drawIndex(root, reports, inbox) {
         ? reportsTable(reports)
         : h("div", { class: "notice" }, h("p", { text: "You have no reports yet. Add one with a share link below." })),
     add));
+}
+
+// -- editing prose (SPEC §6.2) ------------------------------------------------------------
+
+const canEditBlock = (block) => state.report?.kind === "draft" && atLeast("editor")
+  && (block.type === "text" || block.type === "heading");
+
+const blockRevision = (id) => state.report.block_state?.[id]?.revision ?? 0;
+
+function stashKey(id) {
+  return `draft.${state.report.id}.${id}`;
+}
+
+function stash(id, ed) {
+  // Unsaved text stays in the browser until a save succeeds.
+  remembered(stashKey(id), ed ? JSON.stringify({ base: ed.base, text: ed.text }) : "");
+}
+
+function upsertOp(block, text) {
+  const out = { id: block.id, type: block.type, text };
+  if (block.type === "heading") out.level = block.level;
+  return { op: "upsert_block", block: out };
+}
+
+function openEditor(block) {
+  const ed = { text: block.text, base: blockRevision(block.id), original: block.text, findings: null,
+    conflict: null, error: null, saving: false, seq: 0, restored: false };
+  try {
+    const saved = JSON.parse(remembered(stashKey(block.id)) || "null");
+    if (saved && typeof saved.text === "string" && saved.text !== block.text) {
+      Object.assign(ed, { text: saved.text, base: Number.isInteger(saved.base) ? saved.base : ed.base, restored: true });
+    }
+  } catch { /* an unreadable stash is ignored */ }
+  state.editing.set(block.id, ed);
+  renderReport().then(() => {
+    $("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`)?.focus();
+    schedulePreview(block, ed, 0);
+  });
+}
+
+function closeEditor(block) {
+  state.editing.delete(block.id);
+  stash(block.id, null);
+  renderReport();
+}
+
+function blockFindings(findings, id) {
+  const claims = new Set(state.report.claims.filter((c) => c.block_id === id).map((c) => c.id));
+  return findings.filter((f) => f.block === id || (f.claim && claims.has(f.claim)));
+}
+
+function schedulePreview(block, ed, delay = 400) {
+  clearTimeout(ed.timer);
+  ed.timer = setTimeout(() => preview(block, ed), delay);
+}
+
+async function preview(block, ed) {
+  if (ed.text === ed.original || !ed.text.trim()) {
+    ed.findings = null;
+    paintEditor(block, ed);
+    return;
+  }
+  const seq = ++ed.seq;
+  try {
+    const out = await api(`/api/reports/${state.report.id}/validate`, { method: "POST", body: {
+      ops: [upsertOp(block, ed.text)], base_block_revisions: { [block.id]: ed.base } } });
+    if (seq !== ed.seq) return; // a newer keystroke is already being checked
+    ed.findings = blockFindings(out.validation.findings, block.id);
+    ed.error = null;
+    ed.conflict = null;
+  } catch (err) {
+    if (seq !== ed.seq) return;
+    if (err.code === "block_conflict") ed.conflict = err.details.blocks[0];
+    else { ed.error = err.message; ed.findings = null; }
+  }
+  paintEditor(block, ed);
+}
+
+function paintEditor(block, ed) {
+  const root = $("report").querySelector(`#blk-${CSS.escape(block.id)}`);
+  if (!root) return;
+  const changed = ed.text !== ed.original && ed.text.trim() !== "";
+  root.querySelector(".edit-save").disabled = ed.saving || !changed;
+  const errors = ed.findings?.filter((f) => f.severity === "error").length ?? 0;
+  const warnings = ed.findings?.filter((f) => f.severity === "warning").length ?? 0;
+  fill(root.querySelector(".edit-status"),
+    ed.restored && ed.text !== ed.original ? h("p", { class: "meta", text: "Restored your unsaved text." }) : null,
+    ed.error ? h("p", { class: "message", text: ed.error }) : null,
+    ed.findings === null ? null : h("p", { class: "meta" },
+      errors ? h("span", { class: "chip error", text: plural(errors, "error") }) : null,
+      warnings ? h("span", { class: "chip warning", text: plural(warnings, "warning") }) : null,
+      !errors && !warnings ? h("span", { class: "chip ok", text: "no problems" }) : null),
+    ed.findings?.filter((f) => f.severity !== "info").slice(0, 6).map((f) =>
+      h("p", { class: "finding" }, h("span", { class: `chip ${f.severity}`, text: f.severity }), " ",
+        f.claim ? h("code", { text: f.claim }) : null, f.claim ? " " : null, f.message)));
+  fill(root.querySelector(".edit-conflict"), ed.conflict ? conflictNotice(block, ed) : null);
+}
+
+function conflictNotice(block, ed) {
+  const c = ed.conflict;
+  if (c.block === null) {
+    return h("div", { class: "notice error" },
+      h("p", { text: "This block was deleted while you were editing it. Your text is kept below." }),
+      h("button", { class: "toggle", type: "button", text: "Discard my text", onclick: () => closeEditor(block) }));
+  }
+  return h("div", { class: "notice error", role: "alert" },
+    h("p", {}, `This block changed while you were editing it (revision ${c.base_revision} → ${c.revision}). Your text is kept.`),
+    h("p", { class: "meta", text: "Current text:" }),
+    h("pre", { class: "current-text", text: c.block.text }),
+    h("div", { class: "actions" },
+      h("button", { class: "toggle", type: "button", text: "Keep mine", title: "Save my text over the current one",
+        onclick: () => { ed.base = c.revision; ed.conflict = null; saveBlock(block, ed); } }),
+      h("button", { class: "toggle", type: "button", text: "Use current text", title: "Replace my text with the current one",
+        onclick: () => {
+          ed.base = c.revision; ed.original = c.block.text; ed.text = c.block.text; ed.conflict = null; ed.findings = null;
+          stash(block.id, null);
+          $("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`).value = ed.text;
+          paintEditor(block, ed);
+        } })));
+}
+
+async function saveBlock(block, ed) {
+  ed.saving = true;
+  ed.error = null;
+  paintEditor(block, ed);
+  try {
+    const out = await api(`/api/reports/${state.report.id}/edits`, { method: "POST", body: {
+      ops: [upsertOp(block, ed.text)], base_block_revisions: { [block.id]: ed.base } } });
+    state.editing.delete(block.id);
+    stash(block.id, null);
+    state.flash = { block: block.id, text: out.blocks?.[block.id]?.needs_review
+      ? "Saved. This edit is near a claim, so an admin has to review it before the report can be published."
+      : "Saved." };
+    const y = window.scrollY;
+    await loadReport();
+    window.scrollTo(0, y);
+  } catch (err) {
+    ed.saving = false;
+    if (err.code === "block_conflict") ed.conflict = err.details.blocks[0];
+    else ed.error = err.message;
+    paintEditor(block, ed);
+  }
+}
+
+function blockEditor(block) {
+  const ed = state.editing.get(block.id);
+  const heading = block.type === "heading";
+  const field = heading
+    ? h("input", { class: "edit-field", type: "text", "aria-label": "Heading text" })
+    : h("textarea", { class: "edit-field", rows: String(Math.max(4, Math.min(24, ed.text.split("\n").length + 2))),
+      spellcheck: "true", "aria-label": `Text of block ${block.id}, as Markdown` });
+  field.value = ed.text;
+  field.addEventListener("input", () => {
+    ed.text = field.value;
+    ed.restored = false;
+    stash(block.id, ed);
+    paintEditor(block, ed);
+    schedulePreview(block, ed);
+  });
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!$("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-save`).disabled) saveBlock(block, ed); }
+  });
+  const claims = state.report.claims.filter((c) => c.block_id === block.id);
+  const el = h("div", { class: "block-editor" },
+    claims.length ? h("p", { class: "meta", text: "This block has claims. Text inside [ ]{#cN} is what the validator checks, and an edit near a claim needs an admin's review before the report is published." }) : null,
+    field,
+    h("div", { class: "edit-status", role: "status", "aria-live": "polite" }),
+    h("div", { class: "edit-conflict" }),
+    h("div", { class: "actions" },
+      h("button", { class: "toggle primary edit-save", type: "button", text: "Save", disabled: true, onclick: () => saveBlock(block, ed) }),
+      h("button", { class: "toggle", type: "button", text: "Cancel", onclick: () => {
+        if (ed.text !== ed.original && !confirm("Discard your changes to this block?")) return;
+        closeEditor(block);
+      } }),
+      h("span", { class: "meta", text: "Ctrl+Enter saves" })));
+  queueMicrotask(() => paintEditor(block, ed));
+  return el;
 }
 
 // -- sharing (admin) ------------------------------------------------------------------------
