@@ -1,8 +1,8 @@
 // The Bevis web view (SPEC §4): a report rendered from its JSON, with an
 // evidence panel behind every claim and chart mark.
 //
-// The share link's secret lives in the URL fragment (#key=...), which the
-// browser never sends to the server. Everything from the report or its data
+// The share link's secret (or a person's token, SPEC §7.2) lives in the URL
+// fragment (#key=...), which the browser never sends to the server. Everything from the report or its data
 // is inserted with textContent; the only HTML inserted is the server's
 // sanitized rendering of text blocks.
 
@@ -15,6 +15,9 @@ const CHALLENGE_CLASS = { open: "error", answered: "unverified", resolved: "ok",
 
 const state = {
   key: null,
+  person: false, // the key is a person token: it opens an index of reports (SPEC §7.2)
+  rid: null, // the report a person opened
+  tab: "reports",
   version: null, // null: whatever the link opens (the draft, for links that see it)
   report: null,
   evidence: new Map(), // "id@version" -> {evidence, row_keys, ...}
@@ -77,12 +80,15 @@ function readHash() {
     e: params.get("e"),
     row: params.get("row"),
     ch: params.get("ch"),
+    report: params.get("report"),
+    tab: params.get("tab"),
   };
 }
 
 function writeHash() {
   const params = new URLSearchParams();
   params.set("key", state.key);
+  if (state.rid) params.set("report", state.rid);
   if (state.version !== null) params.set("v", String(state.version));
   const o = state.open;
   if (o?.kind === "claim") params.set("c", o.id);
@@ -184,15 +190,33 @@ function claimById(id) {
 
 // -- page -----------------------------------------------------------------------------
 
+function notice(err, fallback) {
+  return h("div", { class: "notice error" }, h("p", { text: err.status === 401 ? fallback : err.message }));
+}
+
 async function load() {
   const hash = readHash();
   state.key = hash.key;
   if (!state.key) {
     fill($("report"),
       h("div", { class: "notice" },
-        h("p", { text: "This page opens a report from a share link." }),
+        h("p", { text: "This page opens a report from a share link, or your reports from a person token." }),
         h("p", { text: "Ask the report's owner for a link. It looks like /view#key=bvl_…" })),
     );
+    return;
+  }
+  try {
+    state.me = await api("/api/me");
+  } catch (err) {
+    fill($("report"), notice(err, "This link or token is invalid, expired, or revoked."));
+    return;
+  }
+  state.person = state.me.kind === "person";
+  state.rid = state.person ? hash.report : null;
+  $("signout").hidden = !state.person;
+  $("home").hidden = !state.person || !state.rid;
+  if (state.person && !state.rid) {
+    await showIndex(hash.tab);
     return;
   }
   state.version = hash.v === null || hash.v === "draft" ? null : Number(hash.v);
@@ -212,16 +236,18 @@ async function loadReport() {
   fill(report, h("p", { class: "meta", text: "Loading…" }));
   try {
     const list = await api("/api/reports");
-    if (!list.length) throw new Error("This link does not open any report.");
-    const rid = list[0].id;
-    state.role = list[0].role;
+    const entry = state.person ? list.find((r) => r.id === state.rid) : list[0];
+    if (!entry) {
+      throw new Error(state.person ? "That report is not in your reports any more." : "This link does not open any report.");
+    }
+    const rid = entry.id;
+    state.role = entry.role;
     state.me = state.me || await api("/api/me");
     const q = new URLSearchParams({ render: "true" });
     if (state.version !== null) q.set("version", String(state.version));
     state.report = await api(`/api/reports/${rid}?${q}`);
   } catch (err) {
-    fill(report, h("div", { class: "notice error" },
-      h("p", { text: err.status === 401 ? "This link is invalid, expired, or revoked." : err.message })));
+    fill(report, notice(err, state.person ? "This token is invalid or has been revoked." : "This link is invalid, expired, or revoked."));
     return;
   }
   state.evidence.clear();
@@ -877,6 +903,124 @@ function openChallengeList(target = null) {
     }) : h("p", { class: "meta", text: "No challenges yet. Open a claim to challenge it." }));
 }
 
+// -- a person's reports and inbox (SPEC §7.2) -------------------------------------------
+
+const INBOX_LABEL = { challenge: "Challenge", suggestion: "Suggestion", review: "Review", publish: "Publish" };
+
+function reportHref(rid, extra = {}) {
+  return `#${new URLSearchParams({ key: state.key, report: rid, ...extra })}`;
+}
+
+function linkSecret(text) {
+  // Accepts a whole share link (…/view#key=bvl_…) or just its secret.
+  const m = String(text).match(/key=([^&\s]+)/);
+  return m ? decodeURIComponent(m[1]) : String(text).trim();
+}
+
+const when = (stamp) => stamp
+  ? new Date(stamp).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+  : "—";
+
+function needsYou(r) {
+  // A null count is data this role cannot see, so it shows nothing rather than a zero.
+  const chips = [];
+  const add = (n, cls, one, many) => { if (n) chips.push(h("span", { class: `chip ${cls}`, text: `${n} ${n === 1 ? one : many}` })); };
+  add(r.needs_review, "error", "block to review", "blocks to review");
+  add(r.pending_suggestions, "", "suggestion", "suggestions");
+  add(r.open_challenges?.awaiting_me, "warning", "challenge needs you", "challenges need you");
+  add(r.open_challenges?.awaiting_agent, "info", "challenge waiting on the agent", "challenges waiting on the agent");
+  add(r.unresolved_pins, "warning", "pin out of date", "pins out of date");
+  return chips.length ? h("span", { class: "chips" }, chips) : h("span", { class: "meta", text: "Nothing" });
+}
+
+function reportsTable(reports) {
+  return h("div", { class: "table-wrap" }, h("table", { class: "rows index" },
+    h("thead", {}, h("tr", {}, ["Report", "Your role", "Version", "Needs you", "Last activity"].map((t) => h("th", { scope: "col", text: t })))),
+    h("tbody", {}, reports.map((r) => h("tr", {},
+      h("th", { scope: "row" }, h("a", { href: reportHref(r.id), text: r.title })),
+      h("td", { text: r.role }),
+      h("td", {},
+        r.latest_version ? `v${r.latest_version}` : "unpublished",
+        r.unpublished_changes ? h("span", { class: "chip", text: "draft ahead" }) : null),
+      h("td", {}, needsYou(r)),
+      h("td", { text: when(r.last_activity) }))))));
+}
+
+function summaryText(item, titles) {
+  // The title is already shown beside the label; some summaries begin with it.
+  const title = titles.get(item.report_id);
+  const text = String(item.summary || "");
+  const bare = title && text.startsWith(`${title}: `) ? text.slice(title.length + 2) : text;
+  return (bare.charAt(0).toUpperCase() + bare.slice(1)).slice(0, 240);
+}
+
+function inboxList(items, reports) {
+  if (!items.length) return h("p", { class: "meta", text: "Nothing needs you right now." });
+  const titles = new Map(reports.map((r) => [r.id, r.title]));
+  return h("ul", { class: "inbox" }, items.map((i) => h("li", {},
+    h("a", { href: reportHref(i.report_id, i.open?.challenge ? { ch: i.open.challenge } : {}) },
+      h("span", { class: `chip ${i.kind === "review" ? "error" : ""}`, text: INBOX_LABEL[i.kind] || i.kind }),
+      " ", h("strong", { text: titles.get(i.report_id) || i.report_id })),
+    h("p", { class: "inbox-summary", text: summaryText(i, titles) }),
+    h("p", { class: "meta", text: [i.author?.name, when(i.at)].filter(Boolean).join(" · ") }))));
+}
+
+async function showIndex(tab) {
+  state.tab = tab === "inbox" ? "inbox" : "reports";
+  document.title = "My reports · Bevis";
+  $("title").textContent = "My reports";
+  fill($("meta"), state.me.name);
+  for (const id of ["version-control", "challenges", "pdf", "share", "audit"]) $(id).hidden = true;
+  const root = $("report");
+  fill(root, h("p", { class: "meta", text: "Loading…" }));
+  let reports, inbox;
+  try {
+    [reports, inbox] = await Promise.all([api("/api/me/reports"), api("/api/me/inbox")]);
+  } catch (err) {
+    fill(root, notice(err, "This token is invalid or has been revoked."));
+    return;
+  }
+  drawIndex(root, reports, inbox);
+}
+
+function drawIndex(root, reports, inbox) {
+  const status = h("p", { class: "message", role: "alert" });
+  const tabButton = (name, label) => h("button", {
+    class: "tab", type: "button", role: "tab", "aria-selected": String(state.tab === name), text: label,
+    onclick: () => {
+      state.tab = name;
+      history.replaceState(null, "", `#${new URLSearchParams({ key: state.key, tab: name })}`);
+      drawIndex(root, reports, inbox);
+    },
+  });
+  const add = h("form", { class: "compose add-report" },
+    h("label", { class: "field" }, "Add a report",
+      h("input", { name: "link", required: true, autocomplete: "off", spellcheck: "false", placeholder: "Paste a share link" })),
+    status,
+    h("div", { class: "actions" }, h("button", { class: "toggle", type: "submit", text: "Add" })));
+  add.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    status.textContent = "";
+    try {
+      await api("/api/me/claims", { method: "POST", body: { link: linkSecret(new FormData(add).get("link")) } });
+      await showIndex(state.tab);
+    } catch (err) {
+      status.textContent = err.status === 404 ? "That link is not valid, or it has been revoked." : err.message;
+    }
+  });
+  fill(root, h("div", { class: "index-view" },
+    h("div", { class: "tabs", role: "tablist" },
+      tabButton("reports", `Reports (${reports.length})`),
+      tabButton("inbox", inbox.length ? `Inbox (${inbox.length})` : "Inbox"),
+      h("button", { class: "quiet", type: "button", text: "Refresh", onclick: () => showIndex(state.tab) })),
+    state.tab === "inbox"
+      ? inboxList(inbox, reports)
+      : reports.length
+        ? reportsTable(reports)
+        : h("div", { class: "notice" }, h("p", { text: "You have no reports yet. Add one with a share link below." })),
+    add));
+}
+
 // -- sharing (admin) ------------------------------------------------------------------------
 
 async function openShare() {
@@ -971,6 +1115,12 @@ function setAudit(on) {
 $("audit").addEventListener("click", () => setAudit(!state.audit));
 $("challenges").addEventListener("click", () => openChallengeList());
 $("share").addEventListener("click", openShare);
+$("home").addEventListener("click", () => { location.hash = new URLSearchParams({ key: state.key }).toString(); });
+$("signout").addEventListener("click", () => {
+  // The token lives only in the fragment; dropping it signs this tab out.
+  history.replaceState(null, "", location.pathname + location.search);
+  location.reload();
+});
 $("pdf").addEventListener("click", (e) => downloadPdf(e.currentTarget));
 $("close-panel").addEventListener("click", closePanel);
 $("copy-link").addEventListener("click", async () => {
@@ -997,6 +1147,8 @@ document.addEventListener("keydown", (e) => {
 window.addEventListener("hashchange", () => {
   const hash = readHash();
   if (hash.key !== state.key) location.reload();
+  else if (state.person && (hash.report || null) !== (state.rid || null)) location.reload();
+  else if (state.person && !state.rid && (hash.tab === "inbox" ? "inbox" : "reports") !== state.tab) location.reload();
 });
 
 try { state.audit = localStorage.getItem("bevis.audit") === "1"; } catch { state.audit = false; }
