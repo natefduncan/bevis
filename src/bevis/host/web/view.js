@@ -2005,6 +2005,32 @@ async function openShare() {
           } }))))))));
   };
 
+  const members = h("div", {});
+  const drawMembers = async () => {
+    const rows = await api(`/api/reports/${rid}/members`);
+    if (!rows.length) {
+      fill(members, h("p", { class: "meta", text: "No one has joined with a person token yet." }));
+      return;
+    }
+    const scopeText = (s) => (s === "draft" ? "draft" : s === "latest" ? "latest version" : `version ${s}`);
+    fill(members, h("div", { class: "table-wrap" }, h("table", { class: "rows members" },
+      h("thead", {}, h("tr", {}, ["Person", "Role", "Data", "Sees", "Joined", ""].map((t) => h("th", { scope: "col", text: t })))),
+      h("tbody", {}, rows.map((m) => h("tr", {},
+        h("td", {}, m.name, m.shared_with ? h("span", { class: "meta", text: ` (link shared with ${m.shared_with} other${m.shared_with === 1 ? "" : "s"})` }) : null),
+        h("td", { text: m.role }), h("td", { text: m.disclosure }), h("td", { text: scopeText(m.scope) }),
+        h("td", { text: (m.since || "").slice(0, 10) }),
+        h("td", {}, m.current ? h("span", { class: "meta", text: "you" }) : h("button", { class: "quiet", type: "button", text: "Remove",
+          onclick: async () => {
+            const also = m.shared_with ? ` The link is shared, so ${m.shared_with} other${m.shared_with === 1 ? "" : "s"} will lose that link too.` : "";
+            if (!confirm(`Remove ${m.name} from this report? Their links are revoked and they cannot rejoin with them.${also}`)) return;
+            try {
+              const res = await api(`/api/reports/${rid}/members/${m.person_id}`, { method: "DELETE" });
+              status.textContent = res.also_removed.length ? `Removed ${m.name}; ${res.also_removed.length} other member(s) lost that link too.` : `Removed ${m.name}.`;
+              await Promise.all([drawMembers(), drawList()]);
+            } catch (err) { status.textContent = err.message; }
+          } }))))))));
+  };
+
   const versions = state.report.versions.map((v) => v.number);
   const form = h("form", { class: "compose share-form" },
     h("label", { class: "field" }, "Whose link is it?", h("input", { name: "name", required: true, placeholder: "e.g. Finance team" })),
@@ -2051,8 +2077,8 @@ async function openShare() {
     }
   });
   fill($("panel-body"), h("p", { class: "meta", text: "Anyone holding a link can open this report with that link's role. Revoke a link to cut it off." }),
-    form, created, h("h3", { text: "Links" }), list);
-  try { await drawList(); } catch (err) { status.textContent = err.message; }
+    form, created, h("h3", { text: "Links" }), list, h("h3", { text: "Members" }), members);
+  try { await Promise.all([drawList(), drawMembers()]); } catch (err) { status.textContent = err.message; }
 }
 
 // -- controls ---------------------------------------------------------------------------
