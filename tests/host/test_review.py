@@ -312,3 +312,35 @@ def test_a_suggestion_conflicts_only_on_a_block_that_changed(host, agent, nate, 
     assert [s["id"] for s in agent.get(f"/api/reports/{published}/suggestions")] == [ok["id"]]  # no second one stored
     nate.post(f"/api/reports/{published}/suggestions",
               {"ops": [text("b2", B2)], "base_block_revisions": {"b2": "1"}}, expect=422)
+
+
+# -- the flag keeps the last reviewed text ------------------------------------------------
+
+
+def test_the_flag_keeps_the_text_before_the_first_unreviewed_edit(host, agent, editor, published):  # noqa: F811
+    editor.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "wide"))]})
+    assert state(editor, published)["b2"]["needs_review"]["from"] == B2
+    # A later edit, by anyone, leaves it: the reviewer sees all that changed since the reviewed text.
+    agent.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "very wide"))]})
+    editor.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "narrow"))]})
+    assert state(editor, published)["b2"]["needs_review"]["from"] == B2
+    # Once cleared, the next flag starts from the text that was cleared.
+    editor.post(f"/api/reports/{published}/blocks/b2/clear_review", {"revision": 4})
+    editor.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "tiny"))]})
+    assert state(editor, published)["b2"]["needs_review"]["from"] == B2.replace("broad", "narrow")
+
+
+def test_a_flagged_new_block_has_no_earlier_text(editor, published):  # noqa: F811
+    claim_ = {"id": "c9", "block_id": "b20", "evidence": [{"id": "q-rev-yoy", "version": 1}], "numbers": [
+        {"text": "12.0%", "tier": "computed",
+         "expression": "pct_change(cell(q-rev-yoy, 2024, revenue), cell(q-rev-yoy, 2025, revenue))"}]}
+    editor.post(f"/api/reports/{published}/edits", {"ops": [
+        text("b20", "[Revenue fell 12.0%]{#c9}."), {"op": "link_claim", "claim": claim_}]})
+    assert state(editor, published)["b20"]["needs_review"]["from"] is None
+
+
+def test_an_accepted_suggestion_flags_from_the_text_before_it(host, agent, other_agent, editor, published):  # noqa: F811
+    sug = other_agent.post(f"/api/reports/{published}/suggestions",
+                           {"ops": [text("b2", B2.replace("broad", "wide"))], "message": "reword"}, expect=201)
+    editor.post(f"/api/reports/{published}/suggestions/{sug['id']}/accept")
+    assert state(editor, published)["b2"]["needs_review"]["from"] == B2

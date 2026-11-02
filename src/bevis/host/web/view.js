@@ -88,6 +88,7 @@ function readHash() {
     report: params.get("report"),
     tab: params.get("tab"),
     s: params.get("s"),
+    rv: params.get("rv"),
   };
 }
 
@@ -100,6 +101,7 @@ function writeHash() {
   if (o?.kind === "claim") params.set("c", o.id);
   if (o?.kind === "challenge") params.set("ch", o.id);
   if (o?.kind === "suggestion") params.set("s", o.id);
+  if (o?.kind === "review") params.set("rv", o.id);
   if (o?.kind === "evidence") {
     params.set("e", `${o.id}@${o.version}`);
     if (o.row !== null && o.row !== undefined) params.set("row", JSON.stringify(o.row));
@@ -233,6 +235,7 @@ async function load() {
   if (hash.c && claimById(hash.c)) openClaim(hash.c, { scroll: true });
   else if (hash.ch) openChallenge(hash.ch);
   else if (hash.s) openSuggestion(hash.s);
+  else if (hash.rv) openReview(hash.rv);
   else if (hash.e) {
     const [id, ver] = hash.e.split("@");
     let row = null;
@@ -305,7 +308,11 @@ function renderHeader() {
       ? h("span", { class: "chip warning", text: plural(counts.warnings, "warning") })
       : h("span", { class: "chip ok", text: "no errors" });
   if (r.kind === "draft") {
-    fill(meta, `Draft, revision ${r.revision}`, summary);
+    const flagged = flaggedBlocks();
+    fill(meta, `Draft, revision ${r.revision}`, summary,
+      flagged.length ? h("button", { class: "chip error chip-button", type: "button",
+        title: "Blocks edited near a claim wait for an admin's review before the report can be published",
+        text: `${plural(flagged.length, "block")} to review`, onclick: () => openReview(flagged[0]) }) : null);
   } else {
     const by = r.published_by;
     const when = new Date(r.published_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -365,7 +372,10 @@ async function renderReport() {
     if (state.editing.has(block.id) && canEditBlock(block)) el = blockEditor(block);
     el.id = `blk-${block.id}`;
     el.dataset.block = block.id;
+    const review = reviewFlag(block.id);
+    if (review) el.classList.add("needs-review");
     root.append(el);
+    if (review) root.append(reviewRow(block, review));
     if (canEditBlock(block) && !state.editing.has(block.id)) {
       root.append(h("div", { class: "edit-row" },
         h("button", { class: "quiet edit-block", type: "button", text: suggesting() ? "Suggest edit" : "Edit",
@@ -940,6 +950,91 @@ function openChallengeList(target = null) {
     }) : h("p", { class: "meta", text: "No challenges yet. Open a claim to challenge it." }));
 }
 
+// -- review of edits near a claim (SPEC §6.2) ----------------------------------------------
+
+const reviewFlag = (id) => (state.report?.kind === "draft" ? state.report.block_state?.[id]?.needs_review ?? null : null);
+const flaggedBlocks = () => state.report.blocks.map((b) => b.id).filter((id) => reviewFlag(id));
+
+function isMine(author) {
+  if (!author || !state.me) return false;
+  if (author.person_id || state.me.person_id) return author.person_id === state.me.person_id;
+  return author.name === state.me.name && author.kind === state.me.author_kind;
+}
+
+function reviewRow(block, flag) {
+  const by = flag.edited_by;
+  return h("div", { class: "review-row" },
+    h("span", { class: "chip error", text: "Needs review" }),
+    h("span", { class: "meta", text: `Edited near a claim by ${isMine(by) ? "you" : by.name} · ${when(flag.edited_at)}` }),
+    h("button", { class: "quiet", type: "button", text: atLeast("admin") ? "Review" : "See what changed",
+      "aria-label": `Review block ${block.id}`, onclick: () => openReview(block.id) }));
+}
+
+async function openReview(bid, { notice = null } = {}) {
+  state.compose = null;
+  state.open = { kind: "review", id: bid };
+  writeHash();
+  showPanel("Review");
+  const block = state.report.blocks.find((b) => b.id === bid);
+  const flag = reviewFlag(bid);
+  if (!block || !flag) {
+    fill($("panel-body"), h("p", { class: "meta", text: "Nothing in this block needs review." }));
+    return;
+  }
+  const revision = state.report.block_state[bid].revision;
+  const claims = state.report.claims.filter((c) => c.block_id === bid);
+  const findings = blockFindings(state.report.validation.findings, bid).filter((f) => f.severity !== "info");
+  const mine = isMine(flag.edited_by);
+  const status = h("p", { class: "message", role: "alert", text: notice || "" });
+  const clear = async (button) => {
+    button.disabled = true;
+    status.textContent = "";
+    try {
+      const out = await api(`/api/reports/${state.report.id}/blocks/${encodeURIComponent(bid)}/clear_review`,
+        { method: "POST", body: { revision } });
+      state.flash = { block: bid, text: out.self_cleared
+        ? "Marked reviewed. You made this edit yourself, so the log records it as a self-review."
+        : "Marked reviewed." };
+      closePanel();
+      const y = window.scrollY;
+      await loadReport();
+      window.scrollTo(0, y);
+    } catch (err) {
+      button.disabled = false;
+      if (err.code === "stale_block") {
+        await loadReport();
+        openReview(bid, { notice: "This block changed while you were looking. Read the new text before marking it reviewed." });
+      } else {
+        status.textContent = err.message;
+      }
+    }
+  };
+  fill($("panel-body"),
+    h("p", {}, h("span", { class: "chip error", text: "Needs review" })),
+    h("p", { class: "meta", text: `Edited near a claim by ${mine ? "you" : flag.edited_by.name} · ${when(flag.edited_at)}` }),
+    h("button", { type: "button", class: "challenge-link", text: `Block ${bid}`,
+      onclick: () => $(`blk-${bid}`)?.scrollIntoView({ behavior: "smooth", block: "center" }) }),
+    h("h3", { text: flag.from === null ? "New text" : "Changes since the last reviewed text" }),
+    h("article", { class: "message-card" },
+      block.type === "chart" ? h("p", { class: "meta", text: "This block's claims changed." })
+        : diffView(flag.from ?? "", block.text)),
+    claims.length ? [h("h3", { text: "Claims in this block" }),
+      h("ul", { class: "review-claims" }, claims.map((c) => h("li", {},
+        h("span", { class: `chip ${c.status}`, text: STATUS_LABEL[c.status] || c.status }), " ",
+        h("button", { class: "quiet", type: "button", text: c.id, onclick: () => openClaim(c.id, { scroll: true }) }), " ",
+        c.numbers.map((n) => n.text).join(", "))))] : null,
+    h("h3", { text: "Validator" }),
+    findings.length ? findings.slice(0, 8).map((f) => h("p", { class: "finding" },
+      h("span", { class: `chip ${f.severity}`, text: f.severity }), " ", f.claim ? h("code", { text: f.claim }) : null,
+      f.claim ? " " : null, f.message)) : h("p", { class: "meta" }, h("span", { class: "chip ok", text: "no problems" })),
+    status,
+    atLeast("admin") ? [
+      mine ? h("p", { class: "meta", text: "You made this edit. You can mark it reviewed yourself; the log records it as a self-review." }) : null,
+      h("div", { class: "actions" },
+        h("button", { class: "toggle primary", type: "button", text: "Mark reviewed", onclick: (e) => clear(e.currentTarget) }))]
+      : h("p", { class: "meta", text: "An admin has to mark this reviewed before the report can be published." }));
+}
+
 // -- suggestions (SPEC §6) ------------------------------------------------------------------
 
 const SUGGESTION_CLASS = { open: "unverified", accepted: "ok", rejected: "error" };
@@ -1099,7 +1194,7 @@ function inboxList(items, reports) {
   if (!items.length) return h("p", { class: "meta", text: "Nothing needs you right now." });
   const titles = new Map(reports.map((r) => [r.id, r.title]));
   return h("ul", { class: "inbox" }, items.map((i) => h("li", {},
-    h("a", { href: reportHref(i.report_id, i.open?.challenge ? { ch: i.open.challenge } : i.open?.suggestion ? { s: i.open.suggestion } : {}) },
+    h("a", { href: reportHref(i.report_id, i.open?.challenge ? { ch: i.open.challenge } : i.open?.suggestion ? { s: i.open.suggestion } : i.open?.block ? { rv: i.open.block } : {}) },
       h("span", { class: `chip ${i.kind === "review" ? "error" : ""}`, text: INBOX_LABEL[i.kind] || i.kind }),
       " ", h("strong", { text: titles.get(i.report_id) || i.report_id })),
     h("p", { class: "inbox-summary", text: summaryText(i, titles) }),

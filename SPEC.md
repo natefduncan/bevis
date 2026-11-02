@@ -602,7 +602,12 @@ when it does either of:
 Such an edit is saved to the draft and sets a flag on each block it
 touched, stored beside the draft's content and never in a published
 version. The flag records `edited_by` (the author, as in §6.1),
-`edited_at`, and the block `revision` it was set at. Edits that are not
+`edited_at`, the block `revision` it was set at, and `from`: the last
+reviewed text, which is what the block said before its first unreviewed
+edit (null for a new block). `from` stays while the flag does, through
+later edits by anyone, so a reviewer sees everything that changed since
+the text was last reviewed; clearing the flag drops it, and the next flag
+starts from the text that was cleared. Edits that are not
 near a claim set no flag: a block's other paragraphs are free to edit.
 An agent's direct edit does not set the flag, so agents are not affected
 by this rule.

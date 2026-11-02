@@ -707,7 +707,12 @@ class Service:
             m["revision"] = m.get("revision", 0) + 1
             if flag_by is not None and (bid in claimed or review.text_near_claim(
                     before_blocks.get(bid), draft["claims"], now_blocks[bid], content["claims"])):
-                m["review"] = {"edited_by": flag_by, "edited_at": now(), "revision": m["revision"]}
+                # `from` is the last reviewed text: what the block said before its first unreviewed edit,
+                # kept while the flag stays, so a reviewer sees everything that changed since.
+                prior = m.get("review")
+                was = prior.get("from") if prior else (
+                    before_blocks[bid].get("text") if bid in before_blocks else None)
+                m["review"] = {"edited_by": flag_by, "edited_at": now(), "revision": m["revision"], "from": was}
                 flagged.append((bid, m["revision"]))
             block_state[bid] = {"revision": m["revision"], "needs_review": bool(m.get("review"))}
         new_draft = _draft_doc(applied.draft["title"], content, meta)
