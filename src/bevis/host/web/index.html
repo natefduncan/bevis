@@ -28,12 +28,21 @@
       <button id="challenges" class="quiet" type="button" hidden>Challenges</button>
       <button id="suggestions" class="quiet" type="button" hidden>Suggestions</button>
       <button id="pdf" class="quiet" type="button" hidden title="Download this published version as a PDF">PDF</button>
+      <button id="edit-all" class="toggle" type="button" hidden title="Open the whole report for editing">Edit</button>
       <button id="publish" class="toggle primary" type="button" hidden title="Publish the draft as a new version">Publish</button>
       <button id="share" class="quiet" type="button" hidden>Share</button>
       <button id="audit" class="toggle" type="button" aria-pressed="false" title="Show every claim's verification status (a)">
         Audit mode
       </button>
       <button id="signout" class="quiet" type="button" hidden title="Forget this token in this tab">Sign out</button>
+    </div>
+    <div id="edit-bar" class="edit-bar" hidden>
+      <strong id="edit-title"></strong>
+      <span id="edit-summary" class="meta" role="status" aria-live="polite"></span>
+      <span id="edit-hint" class="meta"></span>
+      <input id="edit-message" type="text" maxlength="300" placeholder="Why? (optional, for the editor)" aria-label="Why these edits (optional)" hidden>
+      <button id="edit-save" class="toggle primary" type="button" disabled>Save</button>
+      <button id="edit-done" class="toggle" type="button" title="Leave editing (asks first if there is unsaved text)">Done</button>
     </div>
   </header>
   <div class="layout">

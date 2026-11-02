@@ -65,6 +65,7 @@ button, select { font: inherit; color: inherit; }
   gap: 16px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   padding: 12px 24px;
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(6px);
@@ -390,17 +391,22 @@ table.rows.index td .chip { margin-left: 6px; }
 
 /* editing prose (SPEC §6.2) */
 
-.edit-row { margin: -10px 0 14px; font-family: var(--sans); }
-.edit-row .edit-block { padding: 2px 8px; font-size: 12px; opacity: .65; }
-.edit-row .edit-block:hover, .edit-row .edit-block:focus-visible { opacity: 1; }
-.block-editor { margin: 8px 0 20px; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface); font-family: var(--sans); }
+.edit-bar { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding-top: 8px; border-top: 1px solid var(--line); font-family: var(--sans); }
+.edit-bar[hidden] { display: none; }
+.edit-bar .meta { margin: 0; }
+.edit-bar #edit-summary { flex: 0 1 auto; }
+.edit-bar #edit-hint { flex: 1 1 280px; font-size: 12px; }
+.edit-bar .message { margin: 0; }
+.edit-bar input { flex: 2 1 240px; }
+.block-editor { margin: 4px 0 14px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; font-family: var(--sans); }
+.block-editor:focus-within { border-color: var(--accent); background: var(--surface); }
 .edit-field {
   display: block; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--text); font: 14px/1.5 var(--mono);
 }
 textarea.edit-field { resize: vertical; }
 .edit-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.edit-status { min-height: 24px; margin-top: 6px; }
+.edit-status { min-height: 0; margin-top: 2px; }
 .edit-status p { margin: 4px 0; }
 .finding { font-size: 13px; }
 .current-text { white-space: pre-wrap; margin: 4px 0 8px; padding: 8px; border-radius: 6px; background: var(--bg); font: 13px/1.5 var(--mono); }

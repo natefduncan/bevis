@@ -73,7 +73,7 @@ export function paintClaimTools(block, ed) {
     fill(bar, h("span", { class: "meta", text: `“${shorten(ed.sel.text)}”` }),
       toolButton("Make this a claim", () => startClaim(block, ed), "primary-tool"));
   } else {
-    fill(bar, h("span", { class: "meta", text: "Select text to make it a claim." }));
+    fill(bar);
   }
 }
 

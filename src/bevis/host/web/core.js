@@ -26,6 +26,10 @@ export const state = {
   suggestions: [], // open suggestions on the draft (suggesters and up)
   editing: new Map(), // block id -> editor state, for blocks open for editing (SPEC §6.2)
   flash: null, // {block, text}: a note shown once, after a save
+  editAll: false, // the whole report is open for editing (SPEC §6.2)
+  saving: false, // the whole-report save is in flight
+  editNote: "", // what the last save did, shown in the edit bar
+  editError: "", // why the last save failed
 };
 
 export const atLeast = (role) => ROLES.indexOf(state.role) >= ROLES.indexOf(role);

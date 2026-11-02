@@ -528,10 +528,22 @@ Everything below goes through the same operations, validator, and
 suggestion path as an agent edit (§6). The web view adds no new write
 path.
 
+**Editing the whole report.** The web view has one **Edit** button on
+the draft. It opens every text block and heading at once, with no
+per-block Edit or Save. A bar shows how many blocks changed and holds
+**Save** and **Done**. Save sends every change as one edit (or, for a
+suggester, one suggestion) with a `base_block_revisions` entry per
+changed block, so it applies whole or not at all. Charts and the title
+are not edited here. A block you have not changed follows other people's
+edits silently; a block you have changed gets the conflict notice below,
+and Save waits until each such block is resolved, every claim being
+made is finished, and no changed block is empty. Done asks before
+discarding unsaved text.
+
 **Who can edit.**
 
 - **Editor, admin:** edit the draft directly.
-- **Suggester:** the same editor, but Save creates a suggestion for an
+- **Suggester:** the same editor, but Save creates one suggestion for an
   editor to accept (§6).
 - **Commenter, reader:** no editing.
 

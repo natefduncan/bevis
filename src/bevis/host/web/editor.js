@@ -31,9 +31,9 @@ export function upsertOp(block, text) {
   return { op: "upsert_block", block: out };
 }
 
-export function openEditor(block) {
+function createEditor(block) {
   const ed = { text: block.text, base: blockRevision(block.id), original: block.text, findings: null,
-    conflict: null, error: null, saving: false, seq: 0, restored: false, leftover: [], message: "",
+    conflict: null, error: null, seq: 0, restored: false, leftover: [],
     block, pending: new Map(), unlinked: new Set(), selected: null, sel: null, composer: null, check: null, drag: null,
     claimIds: new Set(state.report.claims.filter((c) => c.block_id === block.id).map((c) => c.id)) };
   try {
@@ -45,16 +45,79 @@ export function openEditor(block) {
     }
   } catch { /* an unreadable stash is ignored */ }
   state.editing.set(block.id, ed);
+  return ed;
+}
+
+// -- editing the whole report ----------------------------------------------------------------
+//
+// One mode opens every text block and heading at once, and one Save sends every change as a single
+// edit (or, for a suggester, a single suggestion). There is no per-block save.
+
+export function ensureEditors() {
+  const editable = state.report.blocks.filter((b, i) => canEditBlock(b)
+    && !(i === 0 && b.type === "heading" && b.level === 1 && b.text.trim() === state.report.title.trim())); // the title is in the bar
+  for (const block of editable) if (!state.editing.has(block.id)) createEditor(block);
+  for (const id of [...state.editing.keys()]) if (!editable.some((b) => b.id === id)) state.editing.delete(id);
+}
+
+export function startEditing() {
+  state.editAll = true;
+  state.editNote = "";
+  state.editError = "";
+  ensureEditors();
+  paintEditBar();
   renderReport().then(() => {
-    $("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`)?.focus();
-    schedulePreview(block, ed, 0);
+    $("report").querySelector(".edit-field")?.focus();
+    for (const ed of state.editing.values()) if (isDirty(ed)) schedulePreview(ed.block, ed, 0);
   });
 }
 
-function closeEditor(block) {
-  state.editing.delete(block.id);
-  stash(block.id, null);
+export function stopEditing({ ask = true } = {}) {
+  const dirty = dirtyEditors();
+  if (ask && dirty.length && !confirm(`Discard your unsaved changes to ${plural(dirty.length, "block")}?`)) return;
+  for (const ed of state.editing.values()) { clearTimeout(ed.timer); stash(ed.block.id, null); }
+  state.editing.clear();
+  state.editAll = false;
+  state.editNote = "";
+  state.editError = "";
+  paintEditBar();
   renderReport();
+}
+
+export const dirtyEditors = () => [...state.editing.values()].filter(isDirty);
+
+// Why the whole save cannot go yet, or null.
+function blocker() {
+  const dirty = dirtyEditors();
+  for (const ed of dirty) {
+    if (ed.conflict) return `Block ${ed.block.id} changed while you were editing it: choose what to keep.`;
+  }
+  for (const ed of dirty) {
+    if (!ed.text.trim()) return `Block ${ed.block.id} is empty. Put its text back, or cancel that change.`;
+    const unfinished = unfinishedClaim(ed.block, ed);
+    if (unfinished) return `Block ${ed.block.id}: ${unfinished}`;
+  }
+  return null;
+}
+
+export function paintEditBar() {
+  $("edit-bar").hidden = !state.editAll;
+  $("edit-all").hidden = state.editAll || !(state.report?.kind === "draft" && atLeast("suggester"));
+  if (!state.editAll) return;
+  const dirty = dirtyEditors();
+  const why = blocker();
+  const suggest = suggesting();
+  $("edit-title").textContent = suggest ? "Suggesting edits" : "Editing the whole report";
+  $("edit-summary").textContent = state.editError || why
+    || (state.editNote && !dirty.length ? state.editNote
+      : dirty.length ? `${plural(dirty.length, "block")} changed` : "No changes yet");
+  $("edit-summary").classList.toggle("message", Boolean(state.editError || why));
+  $("edit-message").hidden = !suggest;
+  $("edit-hint").textContent = richSupported
+    ? "Claims are locked: click one for its options, or select text to make a claim. An edit near a claim needs an admin's review before publishing."
+    : "Claims show as [text]{#cN}: that text is what the validator checks. An edit near a claim needs an admin's review before publishing.";
+  $("edit-save").textContent = suggest ? "Suggest these edits" : "Save";
+  $("edit-save").disabled = state.saving || !dirty.length || Boolean(why);
 }
 
 export function blockFindings(findings, id, extra = []) {
@@ -94,23 +157,26 @@ export async function preview(block, ed) {
   updateComposerResults(ed);
 }
 
-// While a block is open in the editor, ask now and then whether someone else changed it, so the
-// notice appears without waiting for the next keystroke (SPEC §6.2). Nothing is written: the check
-// is a validate call with no ops, which only compares the block's revision with the one we started from.
+// While blocks are open in the editor, ask now and then whether someone else changed any of them, so a
+// notice appears without waiting for the next keystroke (SPEC §6.2). Nothing is written: the check is a
+// validate call with no ops, which only compares each block's revision with the one we started from.
+// A block with no changes of yours simply takes the new text; one with changes gets a notice.
 const POLL_MS = 10000;
 
 async function pollEditors() {
-  if (document.hidden || !state.report || state.report.kind !== "draft") return;
-  for (const [id, ed] of [...state.editing]) {
-    if (ed.conflict || ed.saving) continue;
-    const block = ed.block;
-    try {
-      await api(`/api/reports/${state.report.id}/validate`, { method: "POST", body: { ops: [], base_block_revisions: { [id]: ed.base } } });
-    } catch (err) {
-      if (err.code === "block_conflict" && state.editing.get(id) === ed && !ed.saving) {
-        ed.conflict = err.details.blocks[0];
-        paintEditor(block, ed);
-      }
+  if (document.hidden || !state.report || state.report.kind !== "draft" || state.saving || !state.editing.size) return;
+  const eds = [...state.editing.values()];
+  const base = Object.fromEntries(eds.map((ed) => [ed.block.id, ed.base]));
+  try {
+    await api(`/api/reports/${state.report.id}/validate`, { method: "POST", body: { ops: [], base_block_revisions: base } });
+  } catch (err) {
+    if (err.code !== "block_conflict" || state.saving) return;
+    for (const c of err.details.blocks) {
+      const ed = state.editing.get(c.id);
+      if (!ed || ed.conflict || ed.base !== c.base_revision) continue;
+      ed.conflict = c;
+      if (!isDirty(ed) && c.block) applyText(ed.block, ed, c.block.text, c.revision, c.claims);
+      else paintEditor(ed.block, ed);
     }
   }
 }
@@ -124,9 +190,7 @@ function errorText(err) {
 export function paintEditor(block, ed) {
   const root = $("report").querySelector(`#blk-${CSS.escape(block.id)}`);
   if (!root) return;
-  const changed = isDirty(ed) && ed.text.trim() !== "";
   const unfinished = unfinishedClaim(block, ed);
-  root.querySelector(".edit-save").disabled = ed.saving || !changed || Boolean(unfinished);
   const errors = ed.findings?.filter((f) => f.severity === "error").length ?? 0;
   const warnings = ed.findings?.filter((f) => f.severity === "warning").length ?? 0;
   fill(root.querySelector(".edit-status"),
@@ -146,6 +210,7 @@ export function paintEditor(block, ed) {
     h("p", { class: "meta", text: "Your version of what you both changed (copy from it, then dismiss):" }),
     ed.leftover.map((t) => h("pre", { class: "current-text", text: t })),
     h("button", { class: "quiet", type: "button", text: "Dismiss", onclick: () => { ed.leftover = []; paintEditor(block, ed); } })) : null);
+  paintEditBar();
 }
 
 export function diffView(from, to) {
@@ -172,7 +237,9 @@ function conflictNotice(block, ed) {
   if (c.block === null) {
     return h("div", { class: "notice error" },
       h("p", { text: "This block was deleted while you were editing it. Your text is kept below." }),
-      h("button", { class: "toggle", type: "button", text: "Discard my text", onclick: () => closeEditor(block) }));
+      h("button", { class: "toggle", type: "button", text: "Discard my text", onclick: () => {
+        clearTimeout(ed.timer); state.editing.delete(block.id); stash(block.id, null); renderReport().then(paintEditBar);
+      } }));
   }
   // The text you started from, yours, and the current one: merge by paragraph where it is safe.
   const merged = merge3(ed.original, ed.text, c.block.text);
@@ -189,36 +256,44 @@ function conflictNotice(block, ed) {
           ed.leftover = merged.conflicts.map((x) => x.mine.join("\n\n"));
           applyText(block, ed, merged.text, c.revision, c.claims);
         } }),
-      h("button", { class: "toggle", type: "button", text: "Keep mine", title: "Save my text over the current one",
-        onclick: () => { ed.base = c.revision; ed.conflict = null; saveBlock(block, ed); } }),
+      h("button", { class: "toggle", type: "button", text: "Keep mine", title: "Keep my text; saving puts it over the current one",
+        onclick: () => { ed.base = c.revision; ed.conflict = null; stash(block.id, ed); paintEditor(block, ed); schedulePreview(block, ed, 0); } }),
       h("button", { class: "toggle", type: "button", text: "Use current text", title: "Replace my text with the current one",
         onclick: () => applyText(block, ed, c.block.text, c.revision, c.claims) })));
 }
 
-async function saveBlock(block, ed) {
-  ed.saving = true;
-  ed.error = null;
-  paintEditor(block, ed);
+export async function saveAll() {
+  const dirty = dirtyEditors();
+  if (!dirty.length || blocker() || state.saving) return;
+  state.saving = true;
+  state.editError = "";
+  paintEditBar();
   const suggest = suggesting();
+  const message = $("edit-message").value.trim();
   try {
     const out = await api(`/api/reports/${state.report.id}/${suggest ? "suggestions" : "edits"}`, { method: "POST", body: {
-      ops: buildOps(block, ed), base_block_revisions: { [block.id]: ed.base },
-      ...(suggest ? { message: ed.message.trim() } : {}) } });
-    state.editing.delete(block.id);
-    stash(block.id, null);
-    state.flash = { block: block.id, text: suggest
-      ? "Suggested. An editor will review it before it changes the report."
-      : out.blocks?.[block.id]?.needs_review
-        ? "Saved. This edit is near a claim, so an admin has to review it before the report can be published."
-        : "Saved." };
+      ops: dirty.flatMap((ed) => buildOps(ed.block, ed)),
+      base_block_revisions: Object.fromEntries(dirty.map((ed) => [ed.block.id, ed.base])),
+      ...(suggest ? { message } : {}) } });
+    const flagged = Object.values(out.blocks || {}).filter((b) => b.needs_review).length;
+    for (const ed of state.editing.values()) { clearTimeout(ed.timer); stash(ed.block.id, null); }
+    state.editing.clear(); // reopened from the saved report, at its new revisions
+    state.editNote = suggest ? `Suggested ${plural(dirty.length, "block")}. An editor will review them before they change the report.`
+      : `Saved ${plural(dirty.length, "block")}.${flagged ? ` ${plural(flagged, "block")} near a claim ${flagged === 1 ? "needs" : "need"} an admin's review before the report is published.` : ""}`;
+    $("edit-message").value = "";
     const y = window.scrollY;
+    state.saving = false;
     await loadReport();
     window.scrollTo(0, y);
   } catch (err) {
-    ed.saving = false;
-    if (err.code === "block_conflict") ed.conflict = err.details.blocks[0];
-    else ed.error = err.message;
-    paintEditor(block, ed);
+    state.saving = false;
+    if (err.code === "block_conflict") {
+      for (const c of err.details.blocks) { const ed = state.editing.get(c.id); if (ed) ed.conflict = c; }
+      for (const ed of state.editing.values()) paintEditor(ed.block, ed);
+    } else {
+      state.editError = errorText(err);
+    }
+    paintEditBar();
   }
 }
 
@@ -298,32 +373,17 @@ export function blockEditor(block) {
   field.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (!$("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-save`).disabled) saveBlock(block, ed);
+      saveAll();
     }
   });
-  const hasClaims = ed.claimIds.size > 0 || rich;
-  const suggest = suggesting();
   const el = h("div", { class: "block-editor" },
-    suggest ? h("p", { class: "meta", text: "You are suggesting an edit. An editor reviews it before it changes the report." }) : null,
-    hasClaims ? h("p", { class: "meta", text: rich
-      ? "Claims are locked: click one for what you can do with it, or select text to make a claim. An edit near a claim needs an admin's review before the report is published."
-      : "This block has claims. Text inside [ ]{#cN} is what the validator checks, and an edit near a claim needs an admin's review before the report is published." }) : null,
     field,
     rich ? h("div", { class: "claim-tools" }) : null,
     h("div", { class: "claim-composer" }),
     h("div", { class: "edit-status", role: "status", "aria-live": "polite" }),
     h("div", { class: "edit-conflict" }),
     h("div", { class: "edit-leftover" }),
-    suggest ? h("label", { class: "field" }, "Why? (optional)",
-      h("input", { class: "edit-message", type: "text", maxlength: "300", value: ed.message, placeholder: "A line for the editor",
-        oninput: (e) => { ed.message = e.target.value; } })) : null,
-    h("div", { class: "actions" },
-      h("button", { class: "toggle primary edit-save", type: "button", text: suggest ? "Suggest edit" : "Save", disabled: true, onclick: () => saveBlock(block, ed) }),
-      h("button", { class: "toggle", type: "button", text: "Cancel", onclick: () => {
-        if (isDirty(ed) && !confirm("Discard your changes to this block?")) return;
-        closeEditor(block);
-      } }),
-      h("span", { class: "meta", text: "Ctrl+Enter saves" })));
+    h("span", {}));
   queueMicrotask(() => paintEditor(block, ed));
   return el;
 }

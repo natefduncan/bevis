@@ -7,7 +7,7 @@ import { openChallenge, openChallengeList, openCompose } from "./challenges.js";
 import { flaggedBlocks, openReview, reviewFlag, reviewRow } from "./review.js";
 import { openSuggestion } from "./suggestions.js";
 import { showIndex, when } from "./people.js";
-import { blockEditor, canEditBlock, openEditor, suggesting } from "./editor.js";
+import { blockEditor, canEditBlock, ensureEditors, paintEditBar } from "./editor.js";
 
 // -- page -----------------------------------------------------------------------------
 
@@ -69,6 +69,7 @@ export async function loadReport() {
     const q = new URLSearchParams({ render: "true" });
     if (state.version !== null) q.set("version", String(state.version));
     state.report = await api(`/api/reports/${rid}?${q}`);
+    if (state.report.kind !== "draft") { state.editAll = false; state.editing.clear(); } // only the draft is edited
   } catch (err) {
     fill(report, notice(err, state.person ? "This token is invalid or has been revoked." : "This link is invalid, expired, or revoked."));
     return;
@@ -151,11 +152,13 @@ export function renderHeader() {
   $("share").hidden = !atLeast("admin");
   $("publish").hidden = !(r.kind === "draft" && atLeast("editor"));
   $("pdf").hidden = r.kind !== "version"; // only a published version exports
+  paintEditBar();
 }
 
 export async function renderReport() {
   const r = state.report;
   const root = $("report");
+  if (state.editAll) ensureEditors(); // new blocks open too; blocks that went away close
   fill(root);
   root.classList.toggle("audit", state.audit);
   if (state.audit) root.append(auditSummary());
@@ -180,19 +183,13 @@ export async function renderReport() {
     } else {
       el = h("p", { class: "notice", text: `Unsupported block type: ${block.type}` });
     }
-    if (state.editing.has(block.id) && canEditBlock(block)) el = blockEditor(block);
+    if (state.editAll && state.editing.has(block.id) && canEditBlock(block)) el = blockEditor(block);
     el.id = `blk-${block.id}`;
     el.dataset.block = block.id;
     const review = reviewFlag(block.id);
     if (review) el.classList.add("needs-review");
     root.append(el);
     if (review) root.append(reviewRow(block, review));
-    if (canEditBlock(block) && !state.editing.has(block.id)) {
-      root.append(h("div", { class: "edit-row" },
-        h("button", { class: "quiet edit-block", type: "button", text: suggesting() ? "Suggest edit" : "Edit",
-          "aria-label": `${suggesting() ? "Suggest an edit to" : "Edit"} ${block.type === "heading" ? "heading" : "paragraph"} ${block.id}`,
-          onclick: () => openEditor(block) })));
-    }
     if (state.flash?.block === block.id) {
       root.append(h("div", { class: "notice flash", role: "status", text: state.flash.text }));
       state.flash = null;

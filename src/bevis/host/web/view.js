@@ -13,6 +13,7 @@ import { openChallengeList } from "./challenges.js";
 import { openSuggestionList } from "./suggestions.js";
 import { openShare } from "./share.js";
 import { openPublish } from "./publish.js";
+import { saveAll, startEditing, stopEditing } from "./editor.js";
 
 // -- controls ---------------------------------------------------------------------------
 
@@ -31,6 +32,9 @@ $("audit").addEventListener("click", () => setAudit(!state.audit));
 $("challenges").addEventListener("click", () => openChallengeList());
 $("share").addEventListener("click", openShare);
 $("publish").addEventListener("click", openPublish);
+$("edit-all").addEventListener("click", startEditing);
+$("edit-save").addEventListener("click", saveAll);
+$("edit-done").addEventListener("click", () => stopEditing());
 $("suggestions").addEventListener("click", () => openSuggestionList());
 $("home").addEventListener("click", () => { location.hash = new URLSearchParams({ key: state.key }).toString(); });
 $("signout").addEventListener("click", () => {
