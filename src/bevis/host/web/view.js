@@ -1341,6 +1341,28 @@ async function preview(block, ed) {
   updateComposerResults(ed);
 }
 
+// While a block is open in the editor, ask now and then whether someone else changed it, so the
+// notice appears without waiting for the next keystroke (SPEC §6.2). Nothing is written: the check
+// is a validate call with no ops, which only compares the block's revision with the one we started from.
+const POLL_MS = 10000;
+
+async function pollEditors() {
+  if (document.hidden || !state.report || state.report.kind !== "draft") return;
+  for (const [id, ed] of [...state.editing]) {
+    if (ed.conflict || ed.saving) continue;
+    const block = ed.block;
+    try {
+      await api(`/api/reports/${state.report.id}/validate`, { method: "POST", body: { ops: [], base_block_revisions: { [id]: ed.base } } });
+    } catch (err) {
+      if (err.code === "block_conflict" && state.editing.get(id) === ed && !ed.saving) {
+        ed.conflict = err.details.blocks[0];
+        paintEditor(block, ed);
+      }
+    }
+  }
+}
+setInterval(pollEditors, POLL_MS);
+
 function errorText(err) {
   const first = Array.isArray(err.details) ? err.details[0] : null;
   return first?.message ? `${err.message}: ${first.message}` : err.message;
