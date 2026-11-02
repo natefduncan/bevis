@@ -114,8 +114,8 @@ export function paintEditBar() {
   $("edit-summary").classList.toggle("message", Boolean(state.editError || why));
   $("edit-message").hidden = !suggest;
   $("edit-hint").textContent = richSupported
-    ? "Claims are locked: click one for its options, or select text to make a claim. An edit near a claim needs an admin's review before publishing."
-    : "Claims show as [text]{#cN}: that text is what the validator checks. An edit near a claim needs an admin's review before publishing.";
+    ? "Claims are locked: click one for its options, or select text to make a claim. An edit near a claim needs a review before publishing."
+    : "Claims show as [text]{#cN}: that text is what the validator checks. An edit near a claim needs a review before publishing.";
   $("edit-save").textContent = suggest ? "Suggest these edits" : "Save";
   $("edit-save").disabled = state.saving || !dirty.length || Boolean(why);
 }
@@ -300,7 +300,7 @@ export async function saveAll() {
     for (const ed of state.editing.values()) { clearTimeout(ed.timer); stash(ed.block.id, null); }
     state.editing.clear(); // reopened from the saved report, at its new revisions
     state.editNote = suggest ? `Suggested ${plural(dirty.length, "block")}. An editor will review them before they change the report.`
-      : `Saved ${plural(dirty.length, "block")}.${flagged ? ` ${plural(flagged, "block")} near a claim ${flagged === 1 ? "needs" : "need"} an admin's review before the report is published.` : ""}`;
+      : `Saved ${plural(dirty.length, "block")}.${flagged ? ` ${plural(flagged, "block")} near a claim ${flagged === 1 ? "needs" : "need"} review before the report is published.` : ""}`;
     $("edit-message").value = "";
     const y = window.scrollY;
     state.saving = false;

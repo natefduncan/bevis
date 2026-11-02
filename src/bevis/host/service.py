@@ -845,11 +845,12 @@ class Service:
         return {"id": sid, "status": status, **result}
 
     def clear_review(self, p: Principal, rid: str, block_id: str, revision: int) -> dict:
-        """Clear a block's review flag (admin). `revision` is the one the reviewer looked at."""
+        """Clear a block's review flag. An admin may; so may an editor who did not make the edit (SPEC §6.2).
+        `revision` is the one the reviewer looked at."""
         with self.db.write() as conn:
             row, role = self._report_row(conn, p, rid, "suggester", draft=True)
-            if RANK[role] < RANK["admin"]:
-                raise HostError(403, "forbidden", "clearing a review needs the admin role")
+            if RANK[role] < RANK["editor"]:
+                raise HostError(403, "forbidden", "clearing a review needs the editor or admin role")
             if not isinstance(revision, int) or isinstance(revision, bool):
                 raise HostError(422, "malformed", "revision must be an integer")
             draft = loads(row["draft"])
@@ -866,6 +867,9 @@ class Service:
                                 "review the new text and clear it again",
                                 {"block": block, "revision": m.get("revision", 0), "review": flag,
                                  "claims": [c for c in draft["claims"] if c["block_id"] == block_id]})
+            if not _may_clear(role, flag, p.author()):
+                raise HostError(403, "own_edit", "an editor cannot clear the review of their own edit; ask another "
+                                "editor or an admin")
             self_cleared = _same_author(flag["edited_by"], p.author())
             del m["review"]
             conn.execute("UPDATE reports SET draft = ? WHERE id = ?", (dumps(draft), rid))
@@ -1458,8 +1462,10 @@ class Service:
                         items.append({"kind": "suggestion", "report_id": rid, "id": s_["id"],
                                       "summary": s_["message"], "author": loads(s_["author"]),
                                       "at": s_["created_at"], "open": {"report": rid, "suggestion": s_["id"]}})
-                if role == "admin":
+                if RANK[role] >= RANK["editor"]:
                     for f in _flagged_blocks(loads(r["draft"])):
+                        if not _may_clear(role, f, q.author()):
+                            continue
                         items.append({"kind": "review", "report_id": rid, "id": f["id"],
                                       "summary": f"block {f['id']} was edited near a claim", "author": f["edited_by"],
                                       "at": f["edited_at"], "open": {"report": rid, "block": f["id"]}})
@@ -1613,6 +1619,14 @@ def _flagged_blocks(draft: dict) -> list[dict]:
     return [{"id": b["id"], "edited_by": meta[b["id"]]["review"]["edited_by"],
              "edited_at": meta[b["id"]]["review"]["edited_at"]}
             for b in draft["blocks"] if meta.get(b["id"], {}).get("review")]
+
+
+def _may_clear(role: str, flag: dict, author: dict) -> bool:
+    """Admins clear any flag; an editor clears one only for an edit someone else made. `flag` is a review
+    flag or a `_flagged_blocks` entry: both carry `edited_by`."""
+    if RANK[role] >= RANK["admin"]:
+        return True
+    return RANK[role] >= RANK["editor"] and not _same_author(flag["edited_by"], author)
 
 
 def _same_author(a: dict, b: dict) -> bool:

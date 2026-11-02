@@ -168,8 +168,9 @@ def create_mcp(service: Service) -> MCPServer:
 
     @mcp.tool()
     async def clear_review(report_id: str, block_id: str, revision: StrictInt, ctx: Context) -> dict:
-        """Clear a block's needs-review flag (admin), after reading the block at `revision`. A person's edit
-        near a claim flags its block, and publish is refused until every flag is cleared."""
+        """Clear a block's needs-review flag (admin, or an editor who did not make the edit), after reading the
+        block at `revision`. A person's edit near a claim flags its block, and publish is refused until every
+        flag is cleared."""
         return await call(ctx, service.clear_review, report_id, block_id, revision)
 
     @mcp.tool()

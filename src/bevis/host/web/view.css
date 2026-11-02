@@ -454,3 +454,4 @@ textarea.edit-field { resize: vertical; }
 }
 .cell-picker select[size] { width: 100%; }
 .chip-x { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 2px; font: inherit; }
+.remember { display: block; margin: 12px 0; font-family: var(--sans); font-size: 14px; }

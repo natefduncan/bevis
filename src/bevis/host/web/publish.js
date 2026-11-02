@@ -27,7 +27,7 @@ export async function openPublish() {
   const refresh = () => {
     fill(blocked,
       flagged.length ? h("div", { class: "notice" },
-        h("p", {}, `${plural(flagged.length, "block")} must be reviewed first. An admin clears each one.`),
+        h("p", {}, `${plural(flagged.length, "block")} must be reviewed first. Someone other than the author, or an admin, clears each one.`),
         h("ul", {}, flagged.map((id) => h("li", {}, h("button", { class: "quiet", type: "button", text: `Review ${id}`,
           onclick: () => openReview(id) }))))) : null);
     button.disabled = flagged.length > 0 || (needsReason() && !reason.value.trim());

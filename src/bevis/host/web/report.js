@@ -1,6 +1,6 @@
 // Loading and rendering a report: the header, the blocks, and the audit marks.
 
-import { $, STATUS_LABEL, api, atLeast, canDiscuss, canFile, claimById, evidence, fill, h, plural, readHash, state } from "./core.js";
+import { $, STATUS_LABEL, api, atLeast, canDiscuss, canFile, claimById, evidence, fill, h, plural, readHash, remembered, state } from "./core.js";
 import { drawChart } from "./charts.js";
 import { openClaim, openEvidence } from "./panel.js";
 import { openChallenge, openChallengeList, openCompose } from "./challenges.js";
@@ -18,6 +18,13 @@ export function notice(err, fallback) {
 export async function load() {
   const hash = readHash();
   state.key = hash.key;
+  // A person who chose "Remember me on this device" (SPEC §7.2) comes back to their reports without the token in the URL.
+  let fromDevice = false;
+  if (!state.key && remembered("token")) {
+    state.key = remembered("token");
+    fromDevice = true;
+    history.replaceState(null, "", `#${new URLSearchParams({ key: state.key })}`);
+  }
   if (!state.key) {
     fill($("report"),
       h("div", { class: "notice" },
@@ -29,10 +36,12 @@ export async function load() {
   try {
     state.me = await api("/api/me");
   } catch (err) {
-    fill($("report"), notice(err, "This link or token is invalid, expired, or revoked."));
+    if (fromDevice) { remembered("token", ""); history.replaceState(null, "", location.pathname + location.search); }
+    fill($("report"), notice(err, fromDevice ? "The token saved on this device is no longer valid. It has been forgotten." : "This link or token is invalid, expired, or revoked."));
     return;
   }
   state.person = state.me.kind === "person";
+  if (fromDevice && !state.person) remembered("token", ""); // only a person token is ever kept
   state.rid = state.person ? hash.report : null;
   $("signout").hidden = !state.person;
   $("home").hidden = !state.person || !state.rid;
@@ -122,7 +131,7 @@ export function renderHeader() {
     const flagged = flaggedBlocks();
     fill(meta, `Draft, revision ${r.revision}`, summary,
       flagged.length ? h("button", { class: "chip error chip-button", type: "button",
-        title: "Blocks edited near a claim wait for an admin's review before the report can be published",
+        title: "Blocks edited near a claim wait for a review before the report can be published",
         text: `${plural(flagged.length, "block")} to review`, onclick: () => openReview(flagged[0]) }) : null);
   } else {
     const by = r.published_by;

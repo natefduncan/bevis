@@ -1,6 +1,6 @@
 // A person's reports and inbox (SPEC §7.2).
 
-import { $, api, fill, h, state } from "./core.js";
+import { $, api, fill, h, remembered, state } from "./core.js";
 import { notice } from "./report.js";
 
 // -- a person's reports and inbox (SPEC §7.2) -------------------------------------------
@@ -108,6 +108,11 @@ function drawIndex(root, reports, inbox) {
       status.textContent = err.status === 404 ? "That link is not valid, or it has been revoked." : err.message;
     }
   });
+  const remember = h("label", { class: "remember" },
+    h("input", { type: "checkbox", checked: remembered("token") === state.key,
+      onchange: (e) => remembered("token", e.target.checked ? state.key : "") }),
+    " Remember me on this device",
+    h("span", { class: "meta", text: " (keeps this token in the browser until you sign out)" }));
   fill(root, h("div", { class: "index-view" },
     h("div", { class: "tabs", role: "tablist" },
       tabButton("reports", `Reports (${reports.length})`),
@@ -118,5 +123,5 @@ function drawIndex(root, reports, inbox) {
       : reports.length
         ? reportsTable(reports)
         : h("div", { class: "notice" }, h("p", { text: "You have no reports yet. Add one with a share link below." })),
-    add));
+    add, remember));
 }

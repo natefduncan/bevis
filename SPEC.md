@@ -633,12 +633,15 @@ by this rule.
 - `publish` fails with 409 `needs_review` while any block is flagged,
   and `details` lists the blocks. This works like the unresolved-pin
   refusal at export.
-- Any admin can clear a flag with `clear_review`, including the admin
-  who made the edit. Clearing shows the diff from the last reviewed text
-  and the validator's current findings.
-- Self-clear is allowed. It is logged with `self_cleared: true` when the
-  clearing author is the editing author (the same `person_id` under §7.2,
-  else the same author name). The report has no setting to
+- An admin can clear any flag with `clear_review`, including one for an
+  edit they made. An editor can clear a flag for an edit **someone else**
+  made, and gets 403 `own_edit` for their own: a second pair of eyes is
+  the point of a review. Suggesters, commenters, and readers cannot.
+  Clearing shows the diff from the last reviewed text and the validator's
+  current findings.
+- An admin's self-clear is allowed. It is logged with `self_cleared: true`
+  when the clearing author is the editing author (the same `person_id`
+  under §7.2, else the same author name). The report has no setting to
   forbid it.
 - A later edit to a flagged block keeps the flag. A later person's edit
   near a claim moves `edited_by`, `edited_at` and `revision` to that
@@ -667,14 +670,12 @@ export render the same as one with no human edits, and the bundle
 (§10) carries none of them.
 
 **Agent interface (§9).** `edit_draft` and `validate_report` accept
-`base_block_revisions`. `clear_review` is a new tool, admin only. An
+`base_block_revisions`. `clear_review` is a new tool, for admins and for editors who did not make the edit. An
 edit's result carries `blocks`, the new `{revision, needs_review}` of
 each block it touched. `get_report` returns `block_state`.
 
 **Open items.**
 
-- Whether `clear_review` should also be offered to editors who did not
-  make the edit. Today it is admin only.
 - Paragraph granularity is coarser than a sentence: a long paragraph
   with one claim flags on any edit to it. Splitting sentences would need
   a splitter the validator does not have.
@@ -754,7 +755,7 @@ person without changing memberships, through the `author.verified` field
 and MCP interfaces (§9). In the web view it travels in the URL fragment,
 like a link (§7.1), so it is never sent to the server in a URL.
 
-A person token cannot create reports in v1 (open item below). Agent keys
+A person token cannot create reports in v1: a report's evidence comes from agents, so reports are created by agent keys and reach people through links. Agent keys
 are unchanged and are not linked to people.
 
 **Membership.** A membership ties a person to one link. It stores no role
@@ -866,15 +867,22 @@ appear in the report's log for admins, not in the person's own view.
 nullable `bound_person_id`. This is a schema version bump with a
 migration on open.
 
-**Open items.**
+**Decided.**
 
-- Whether a person can create a report directly, and with which role.
+- A person does not create reports (above). This can be revisited if
+  people need to start an empty report for an agent to fill.
+- Inbox items are always derived from current state, never dismissed. An
+  item goes away when the thing it names is dealt with, so it cannot hide
+  something that still blocks publishing. The `review` item is shown to
+  those who may clear it: admins, and editors for an edit they did not
+  make.
+- The browser keeps a person token only if the person ticks **Remember me
+  on this device** on the index (off by default; the box is unchecked on a
+  shared computer). The token is then kept in local storage, and `/view`
+  with no `#key` opens the index with it. **Sign out** forgets it, as does
+  a revoked or invalid saved token. A share link is never stored.
 - Notifications (email or chat when a challenge opens) need a verified
   address, so they wait for OIDC.
-- Whether an inbox item should be dismissible, or is always derived from
-  current state. Derived is simpler and cannot go stale.
-- Token storage in the browser for returning to the index without
-  pasting the person token each time.
 
 ---
 

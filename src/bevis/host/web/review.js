@@ -17,12 +17,15 @@ function isMine(author) {
   return author.name === state.me.name && author.kind === state.me.author_kind;
 }
 
+// An admin may clear any flag; an editor only for an edit someone else made (SPEC §6.2).
+export const canClear = (flag) => atLeast("admin") || (atLeast("editor") && !isMine(flag.edited_by));
+
 export function reviewRow(block, flag) {
   const by = flag.edited_by;
   return h("div", { class: "review-row" },
     h("span", { class: "chip error", text: "Needs review" }),
     h("span", { class: "meta", text: `Edited near a claim by ${isMine(by) ? "you" : by.name} · ${when(flag.edited_at)}` }),
-    h("button", { class: "quiet", type: "button", text: atLeast("admin") ? "Review" : "See what changed",
+    h("button", { class: "quiet", type: "button", text: canClear(flag) ? "Review" : "See what changed",
       "aria-label": `Review block ${block.id}`, onclick: () => openReview(block.id) }));
 }
 
@@ -84,9 +87,11 @@ export async function openReview(bid, { notice = null } = {}) {
       h("span", { class: `chip ${f.severity}`, text: f.severity }), " ", f.claim ? h("code", { text: f.claim }) : null,
       f.claim ? " " : null, f.message)) : h("p", { class: "meta" }, h("span", { class: "chip ok", text: "no problems" })),
     status,
-    atLeast("admin") ? [
+    canClear(flag) ? [
       mine ? h("p", { class: "meta", text: "You made this edit. You can mark it reviewed yourself; the log records it as a self-review." }) : null,
       h("div", { class: "actions" },
         h("button", { class: "toggle primary", type: "button", text: "Mark reviewed", onclick: (e) => clear(e.currentTarget) }))]
-      : h("p", { class: "meta", text: "An admin has to mark this reviewed before the report can be published." }));
+      : h("p", { class: "meta", text: mine && atLeast("editor")
+        ? "You made this edit, so another editor or an admin has to mark it reviewed before the report can be published."
+        : "An editor who did not make this edit, or an admin, has to mark it reviewed before the report can be published." }));
 }

@@ -59,7 +59,7 @@ def test_an_edit_near_a_claim_is_flagged_and_blocks_publishing_until_reviewed(pa
     save = page.locator("#edit-save")
     expect(save).to_be_enabled()
     save.click()
-    expect(page.locator("#edit-summary")).to_contain_text("needs an admin's review")
+    expect(page.locator("#edit-summary")).to_contain_text("needs review")
     flag = page.locator("#meta .chip-button")
     expect(flag).to_contain_text("1 block to review")
 
@@ -320,3 +320,74 @@ def test_an_unsaved_edit_survives_a_reload(page, seed):
     page.locator("#edit-all").click()
     expect(page.locator("#blk-b2 .edit-field")).to_contain_text("Margins held.")
     expect(page.locator("#blk-b2 .edit-status")).to_contain_text("Restored your unsaved text")
+
+
+def test_an_editor_reviews_someone_elses_edit_but_not_their_own(page, seed):
+    edit_b2_as(seed, "ada")  # the admin's edit near a claim: flagged
+    page.goto(seed.view("eli", v="draft", rv="b2"))
+    page.get_by_role("button", name="Mark reviewed").click()  # an editor may, since they did not make it
+    expect(page.locator("#meta .chip-button")).to_have_count(0)
+
+    seed.call("eli", "POST", f"/api/reports/{seed.rid}/edits", {"ops": [
+        {"op": "upsert_block", "block": {"id": "b2", "type": "text", "text": B2.replace("broad", "deep")}}]})
+    page.goto(seed.view("eli", v="draft", rv="b2"))
+    expect(page.locator("#panel-body")).to_contain_text("another editor or an admin has to mark it reviewed")
+    expect(page.get_by_role("button", name="Mark reviewed")).to_have_count(0)
+    page.goto(seed.view("ada", v="draft", rv="b2"))
+    page.get_by_role("button", name="Mark reviewed").click()  # an admin may
+    expect(page.locator("#meta .chip-button")).to_have_count(0)
+
+
+def stored_token(page):
+    return page.evaluate("localStorage.getItem('bevis.token') || ''")
+
+
+def test_remember_me_is_off_by_default_and_the_token_is_not_kept(page, seed):
+    page.goto(seed.index("ada"))
+    expect(page.locator("#title")).to_have_text("My reports")
+    expect(page.get_by_label("Remember me on this device")).not_to_be_checked()
+    assert stored_token(page) == ""
+    page.goto(f"{seed.host.url}/view")  # no token in the address: nothing to open
+    expect(page.locator("#report")).to_contain_text("This page opens a report")
+
+
+def test_remember_me_brings_a_person_back_to_their_reports_until_they_sign_out(page, seed):
+    page.goto(seed.index("ada"))
+    page.get_by_label("Remember me on this device").check()
+    assert stored_token(page) == seed.names["ada"]
+    page.goto(f"{seed.host.url}/view")  # no #key: the saved token is used
+    expect(page.locator("#title")).to_have_text("My reports")
+    expect(page.locator("table.index tbody tr")).to_have_count(1)
+    expect(page.get_by_label("Remember me on this device")).to_be_checked()
+
+    page.locator("#signout").click()
+    expect(page.locator("#report")).to_contain_text("This page opens a report")
+    assert stored_token(page) == ""
+    page.goto(f"{seed.host.url}/view")
+    expect(page.locator("#report")).to_contain_text("This page opens a report")
+
+
+def test_unchecking_remember_me_forgets_the_token(page, seed):
+    page.goto(seed.index("ada"))
+    box = page.get_by_label("Remember me on this device")
+    box.check()
+    box.uncheck()
+    assert stored_token(page) == ""
+
+
+def test_a_remembered_token_that_was_revoked_is_forgotten(page, seed):
+    name = seed.call("ada", "GET", "/api/me")["name"]
+    page.goto(seed.index("ada"))
+    page.get_by_label("Remember me on this device").check()
+    seed.host.service.revoke_person(name)
+    page.goto(f"{seed.host.url}/view")
+    expect(page.locator("#report")).to_contain_text("no longer valid")
+    assert stored_token(page) == ""
+
+
+def test_a_share_link_is_never_remembered(page, seed):
+    link = seed.call("ada", "POST", f"/api/reports/{seed.rid}/links", {"name": "r", "role": "reader"}, 201)["secret"]
+    page.goto(f"{seed.host.url}/view#key={link}")
+    expect(page.locator("#meta")).to_contain_text("Version 1")
+    assert stored_token(page) == ""
+    expect(page.get_by_label("Remember me on this device")).to_have_count(0)

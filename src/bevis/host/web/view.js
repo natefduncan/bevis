@@ -6,7 +6,7 @@
 // is inserted with textContent; the only HTML inserted is the server's
 // sanitized rendering of text blocks.
 
-import { $, downloadPdf, state, writeHash } from "./core.js";
+import { $, downloadPdf, remembered, state, writeHash } from "./core.js";
 import { load, loadReport, renderReport } from "./report.js";
 import { closePanel } from "./panel.js";
 import { openChallengeList } from "./challenges.js";
@@ -38,6 +38,7 @@ $("edit-done").addEventListener("click", () => stopEditing());
 $("suggestions").addEventListener("click", () => openSuggestionList());
 $("home").addEventListener("click", () => { location.hash = new URLSearchParams({ key: state.key }).toString(); });
 $("signout").addEventListener("click", () => {
+  remembered("token", ""); // and the copy kept for "Remember me"
   // The token lives only in the fragment; dropping it signs this tab out.
   history.replaceState(null, "", location.pathname + location.search);
   location.reload();

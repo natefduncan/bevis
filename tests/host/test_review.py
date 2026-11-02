@@ -231,12 +231,39 @@ def test_clearing_someone_elses_edit_is_not_a_self_clear(host, agent, editor, da
     assert out["self_cleared"] is False
 
 
-def test_only_an_admin_clears(host, agent, editor, nate, published):  # noqa: F811
+def test_an_editor_clears_an_edit_they_did_not_make(host, agent, editor, dana, published):  # noqa: F811
     editor.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "wide"))]})
-    other = Api(host, make_link(host, agent, published, role="editor"))
-    other.post(f"/api/reports/{published}/blocks/b2/clear_review", {"revision": 2}, expect=403)
-    Api(host, make_link(host, agent, published, role="commenter")).post(
-        f"/api/reports/{published}/blocks/b2/clear_review", {"revision": 2}, expect=403)
+    claim(dana, make_link(host, agent, published, role="editor", name="dana editor"))
+    out = dana.post(f"/api/reports/{published}/blocks/b2/clear_review", {"revision": 2})
+    assert out["cleared"] and out["self_cleared"] is False
+    assert state(dana, published)["b2"]["needs_review"] is None
+
+
+def test_an_editor_cannot_clear_their_own_edit(host, agent, nate, published):  # noqa: F811
+    claim(nate, make_link(host, agent, published, role="editor"))
+    nate.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "wide"))]})
+    r = nate.post(f"/api/reports/{published}/blocks/b2/clear_review", {"revision": 2}, expect=403)
+    assert r["error"]["code"] == "own_edit"
+    assert state(nate, published)["b2"]["needs_review"]  # still flagged
+
+
+def test_only_editors_and_admins_clear(host, agent, editor, published):  # noqa: F811
+    editor.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "wide"))]})
+    for role in ("commenter", "reader", "suggester"):
+        Api(host, make_link(host, agent, published, role=role)).post(
+            f"/api/reports/{published}/blocks/b2/clear_review", {"revision": 2}, expect=403)
+
+
+def test_the_inbox_asks_only_those_who_may_clear(host, agent, editor, dana, published):  # noqa: F811
+    editor.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "wide"))]})
+    claim(dana, make_link(host, agent, published, role="editor", name="dana editor"))
+    assert [i["kind"] for i in dana.get("/api/me/inbox") if i["kind"] == "review"] == ["review"]
+    # The admin who made the edit may clear it (self-clear is allowed) so it is theirs to review too.
+    assert [i["kind"] for i in editor.get("/api/me/inbox") if i["kind"] == "review"] == ["review"]
+    # An editor who made the edit is not asked to review it.
+    dana.post(f"/api/reports/{published}/edits", {"ops": [text("b4", B4.replace("dropped", "fell"))]})
+    mine = [i for i in dana.get("/api/me/inbox") if i["kind"] == "review"]
+    assert [i["open"]["block"] for i in mine] == ["b2"]
 
 
 def test_a_clear_against_an_old_revision_is_refused_with_the_new_block(host, agent, editor, published):  # noqa: F811
