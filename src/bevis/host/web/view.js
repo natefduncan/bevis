@@ -115,6 +115,52 @@ async function evidence(id, version) {
   return state.evidence.get(k);
 }
 
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function csvField(text) {
+  // Quote what CSV needs quoted; a leading = + - @ would run as a formula in a spreadsheet.
+  if (/^[=+\-@\t\r]/.test(text) && Number.isNaN(Number(text))) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function evidenceCsv(doc) {
+  // Exactly what the table shows: withheld cells stay empty, nulls are empty, decimals keep their text.
+  const withheld = new Set((doc.disclosure?.withheld_cells || []).map(([i, name]) => `${i}\u0000${name}`));
+  const names = doc.columns.map((c) => c.name);
+  const lines = [names.map(csvField).join(",")];
+  doc.rows.forEach((row, i) => {
+    lines.push(row.map((v, j) => (v === null || withheld.has(`${i}\u0000${names[j]}`) ? "" : csvField(String(v)))).join(","));
+  });
+  return `\ufeff${lines.join("\r\n")}\r\n`;
+}
+
+async function downloadPdf(button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Rendering…";
+  try {
+    const res = await fetch(`/api/reports/${state.report.id}/export.pdf?version=${state.report.version}`,
+      { headers: { Authorization: `Bearer ${state.key}` } });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.error?.message || `request failed (${res.status})`);
+    }
+    saveBlob(await res.blob(), `${state.report.id}-v${state.report.version}.pdf`);
+  } catch (err) {
+    alert(`Could not export the PDF: ${err.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 function plural(n, word) {
   return `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 }
@@ -236,6 +282,7 @@ function renderHeader() {
   $("challenges").hidden = !canDiscuss();
   $("challenges").textContent = live ? `Challenges (${live} unresolved)` : "Challenges";
   $("share").hidden = !atLeast("admin");
+  $("pdf").hidden = r.kind !== "version"; // only a published version exports
 }
 
 async function renderReport() {
@@ -601,6 +648,9 @@ function resultTable(doc, rowKeys, cells, focusRow, ident, marks = []) {
     fill(wrap,
       h("div", { class: "table-tools" },
         h("span", { text: [`${indexes.length.toLocaleString()} of ${doc.row_count.toLocaleString()} rows`, ...notes].join(" · ") }),
+        h("button", { class: "quiet", type: "button", text: "Download CSV",
+          title: "All rows of this result, as disclosed at this link's level",
+          onclick: () => saveBlob(new Blob([evidenceCsv(doc)], { type: "text/csv;charset=utf-8" }), `${ident.id}.v${ident.version}.csv`) }),
         citedRows.size ? h("label", {},
           h("input", { type: "checkbox", checked: citedOnly, onchange: (e) => { citedOnly = e.target.checked; page = 0; draw(); } }),
           "cited rows only") : null),
@@ -921,6 +971,7 @@ function setAudit(on) {
 $("audit").addEventListener("click", () => setAudit(!state.audit));
 $("challenges").addEventListener("click", () => openChallengeList());
 $("share").addEventListener("click", openShare);
+$("pdf").addEventListener("click", (e) => downloadPdf(e.currentTarget));
 $("close-panel").addEventListener("click", closePanel);
 $("copy-link").addEventListener("click", async () => {
   try {
