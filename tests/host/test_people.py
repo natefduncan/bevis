@@ -253,6 +253,53 @@ def test_leaving_keeps_the_link_valid(host, agent, nate, published):
     assert claim(nate, secret)["created"] is True
 
 
+def _grant(host, agent, rid, person, role="admin"):
+    admin = Api(host, admin_secret(host, agent, rid))
+    return admin.post(f"/api/reports/{rid}/links", {"name": f"for {person}", "role": role, "person": person},
+                      expect=201)
+
+
+def test_the_only_admin_cannot_leave(host, agent, nate, published):
+    # Nate's admin link is bound to him and has no secret, so leaving would orphan the report's admin.
+    _grant(host, agent, published, "nate")
+    _revoke_other_admin_links(host, published, keep="for nate")
+    err = nate.post(f"/api/reports/{published}/leave", expect=409)
+    assert err["error"]["code"] == "last_admin"
+    assert nate.get("/api/me/reports")  # still a member
+
+
+def test_an_admin_can_leave_when_another_admin_remains(host, agent, nate, dana, published):
+    _grant(host, agent, published, "nate")
+    _grant(host, agent, published, "dana")
+    _revoke_other_admin_links(host, published, keep=("for nate", "for dana"))
+    nate.post(f"/api/reports/{published}/leave")
+    # Dana is now the last one.
+    assert dana.post(f"/api/reports/{published}/leave", expect=409)["error"]["code"] == "last_admin"
+
+
+def test_an_admin_can_leave_when_an_unbound_admin_link_exists(host, agent, nate, published):
+    _grant(host, agent, published, "nate")
+    admin_secret(host, agent, published)  # an admin link with a secret someone holds
+    nate.post(f"/api/reports/{published}/leave")
+
+
+def test_a_non_admin_can_always_leave(host, agent, nate, published):
+    _grant(host, agent, published, "nate", role="editor")
+    _revoke_other_admin_links(host, published, keep="for nate")
+    nate.post(f"/api/reports/{published}/leave")
+
+
+def _revoke_other_admin_links(host, rid, keep):
+    keep = {keep} if isinstance(keep, str) else set(keep)
+    from bevis.host.auth import Principal
+
+    creator = host.service.list_agent_keys()[0]["id"]
+    p = Principal(creator, "link", "Nate", "human", rid, "admin", "full", "draft")
+    for l in host.service.list_links(p, rid):
+        if l["role"] == "admin" and l["name"] not in keep and not l["revoked_at"]:
+            host.service.revoke_link(p, rid, l["id"])
+
+
 def test_members_are_listed_and_removed(host, agent, nate, dana, published):
     claim(nate, admin_secret(host, agent, published))
     shared = make_link(host, agent, published, role="commenter")

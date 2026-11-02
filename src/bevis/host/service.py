@@ -1323,11 +1323,29 @@ class Service:
         """Drop the report from this person's reports. Its links stay valid; claim one again to return."""
         self._need_person(p)
         with self.db.write() as conn:
+            self._guard_last_admin(conn, rid, p.person_id)
             cur = conn.execute("DELETE FROM memberships WHERE person_id = ? AND report_id = ?", (p.person_id, rid))
             if cur.rowcount == 0:
                 raise _not_found(f"report {rid}")
             self._log(conn, rid, p.author(), "leave_report", None, {"person_id": p.person_id})
         return {"report_id": rid, "left": True}
+
+    def _guard_last_admin(self, conn: sqlite3.Connection, rid: str, person_id: str) -> None:
+        """A person whose admin access comes through links bound to them (which have no secret, so cannot be
+        reclaimed) may not leave if that would leave the report with no admin anyone can use."""
+        live = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)"
+        mine = conn.execute(
+            f"SELECT 1 FROM credentials WHERE report_id = ? AND kind = 'link' AND role = 'admin' AND {live}"
+            " AND bound_person_id = ?", (rid, now(), person_id)).fetchone()
+        if not mine:
+            return
+        other = conn.execute(
+            f"SELECT 1 FROM credentials WHERE report_id = ? AND kind = 'link' AND role = 'admin' AND {live}"
+            " AND (bound_person_id IS NULL OR (bound_person_id != ? AND EXISTS"
+            " (SELECT 1 FROM memberships m WHERE m.link_id = credentials.id)))",
+            (rid, now(), person_id)).fetchone()
+        if not other:
+            raise HostError(409, "last_admin", "you are the only admin; grant admin to someone else first")
 
     def _members(self, conn: sqlite3.Connection, rid: str) -> list[sqlite3.Row]:
         return conn.execute(

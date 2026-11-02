@@ -522,7 +522,7 @@ accounts can be added later without changing the model.
 
 ### 6.2 Human editing in the web view
 
-Status: proposed. Builds on the person model (a human holds several
+Status: implemented. Builds on the person model (a human holds several
 reports; roles stay per report) and adds an editor to the draft view.
 Everything below goes through the same operations, validator, and
 suggestion path as an agent edit (§6). The web view adds no new write
@@ -727,7 +727,7 @@ with Vega's expression interpreter, so author chart expressions are
 interpreted, never compiled, and `href` channels are dropped.
 ### 7.2 People and memberships
 
-Status: proposed. Lets one human hold many reports in one place. It adds
+Status: implemented. Lets one human hold many reports in one place. It adds
 a holder of capabilities. It adds no new permission model: what a person
 can do on a report is exactly what the links behind their memberships
 allow.
@@ -789,7 +789,9 @@ every report check sees what a link holder would.
 
 - A person may leave a report (`POST /api/reports/{id}/leave`). This
   deletes the membership. The link stays valid, and the person can claim
-  it again.
+  it again. A person whose admin access comes through a link granted to
+  them (a bound link has no secret, so they could not reclaim it) cannot
+  leave if no other admin access would remain: 409 `last_admin`.
 - An admin sees **Members** in Share (`GET /api/reports/{id}/members`):
   each person with their role, the link behind it, and how many others
   share that link. Removing a member revokes the links behind that
