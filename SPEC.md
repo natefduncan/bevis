@@ -485,7 +485,9 @@ Token roles: `reader`, `commenter`, `suggester`, `editor`, `admin`.
   **suggester** on all others. A **link** (§7) is a capability for one
   report with a fixed role. Creating a report returns a one-time
   **admin link** for its human owner, who manages the other links. The
-  host stores only SHA-256 hashes of secrets.
+  host stores only SHA-256 hashes of secrets. A **person token** names a
+  human across the host and holds memberships in links (§7.2); it grants
+  nothing the links behind it do not.
 - Suggesters see the live draft, because a suggestion is made against it.
   Readers and commenters see published versions only.
 - **Edits are operations.** A direct edit and a suggestion are both a
@@ -517,6 +519,117 @@ verified}`), `action`, `before`, `after`, `timestamp`. Every edit,
 suggestion, acceptance, publish, comment, and non-data marking is
 logged. The author field can hold a verified or unverified identity so
 accounts can be added later without changing the model.
+
+### 6.2 Human editing in the web view
+
+Status: proposed. Builds on the person model (a human holds several
+reports; roles stay per report) and adds an editor to the draft view.
+Everything below goes through the same operations, validator, and
+suggestion path as an agent edit (§6). The web view adds no new write
+path.
+
+**Who can edit.**
+
+- **Editor, admin:** edit the draft directly.
+- **Suggester:** the same editor, but Save creates a suggestion for an
+  editor to accept (§6).
+- **Commenter, reader:** no editing.
+
+**Text and claim chips.** The editor treats a block's Markdown in two
+parts.
+
+- **Prose** (outside claim spans) is edited freely.
+- **Claim spans** appear as chips. Text inside a chip is not typed into.
+  Its displayed text changes only through the claim actions below, so
+  the validator's number and direction checks (§4.1, §4.2) stay the
+  authority on what a chip says.
+
+**Claim actions.** A human may create, move, unlink, and delete claims
+over evidence already in the report. A human cannot add evidence or
+submit rows (§9); only agents and clients do.
+
+- **Create:** select text, choose evidence (slug and version), and give a
+  cell reference or expression (§4). The editor shows the computed value
+  next to the displayed text, live, using `validate_report` to preview
+  without storing. Save emits `upsert_block` plus `link_claim`.
+- **Move:** relocate a span with its claim id and pin. Move is a
+  `upsert_block` that removes the span from one place and adds it in
+  another, in one atomic edit, so the claim is never dropped between
+  the two. The validator re-checks the new sentence.
+- **Unlink:** `unlink_claim`. The text stays; any number in it is
+  treated as unsupported by the validator.
+- **Delete:** `delete_block` semantics for the span: the claim and its
+  span are removed together.
+
+**Concurrency.** Each block has its own `revision`, incremented when its
+content or its claims change. `get_report` returns it per block.
+
+- A human edit sends `base_block_revision` for each block it changes,
+  and may still send `base_revision` for the whole draft.
+- If the blocks it touches are unchanged, the edit applies against the
+  current draft and is re-validated, even if other blocks changed.
+- If a touched block changed, the edit fails with 409 `block_conflict`.
+  `details` carry the current block, the revision the editor started
+  from, and the changed claims.
+- The editor shows the human's text beside the current block with a
+  diff, and offers keep mine, take theirs, or merge by hand. Claim chips
+  are locked during a merge, so a merge only resolves prose.
+- Unsaved text stays in the browser until a save succeeds. There are no
+  locks. The view shows a notice when an agent changes a block that is
+  open in the editor.
+
+**Review of edits near a claim.** A human edit is **near a claim** when
+it does any of:
+
+- changes text inside or in the same sentence as a claim span;
+- creates, moves, or unlinks a claim.
+
+Such an edit is saved to the draft and sets `needs_review` on each block
+it touched. The flag records `edited_by` (the author, as in §6.1),
+`edited_at`, and the block revision at the time. Edits that are not near
+a claim set no flag. An agent's direct edit does not set the flag, so
+agents are not affected by this rule.
+
+- `publish` fails with 409 `needs_review` while any block is flagged,
+  and `details` lists the blocks. This works like the unresolved-pin
+  refusal at export.
+- Any admin can clear a flag with `clear_review`, including the admin
+  who made the edit. Clearing shows the diff from the last reviewed text
+  and the validator's current findings.
+- Self-clear is allowed. It is logged with `self_cleared: true` when the
+  clearing author is the editing author (the same `person_id` under §7.2,
+  else the same author name). The report has no setting to
+  forbid it.
+- A later edit to a flagged block keeps the flag. It moves
+  `edited_by`/`edited_at`, and the earlier edits stay in the activity log.
+- A flag can only be cleared against the current block revision. If the
+  block changed since, the clear fails with 409 and shows the new diff.
+- Accepting a suggestion that is near a claim also sets the flag, as the
+  accepting editor's own edit would.
+
+**Activity log.** Entries (§6.1) for human edits carry `action` values
+`edit_block`, `create_claim`, `move_claim`, `unlink_claim`,
+`delete_claim`, `flag_review`, and `clear_review`. `clear_review` records
+`self_cleared` and the cleared revision.
+
+**Published output.** Flags, edit history, and `self_cleared` appear in
+the draft view and the activity log only. A published version and every
+export render the same as one with no human edits, and the bundle
+(§10) carries none of them.
+
+**Agent interface (§9).** `edit_draft` and `validate_report` accept
+`base_block_revision`. `clear_review` is a new operation and tool, admin
+only. `get_report` returns `needs_review` and `revision` per block.
+
+**Open items.**
+
+- The "same sentence" test needs a sentence splitter, and it should be
+  the one the validator already uses to match spans (§4.1) so the two
+  never disagree.
+- Whether `clear_review` should also be offered to editors who did not
+  make the edit.
+- The index page for a person with several reports should list blocks
+  that need review per report.
 
 ---
 
@@ -574,6 +687,133 @@ inserted as text, never as HTML. The page sends a strict
 Content-Security-Policy with no inline script and no `eval`. Charts run
 with Vega's expression interpreter, so author chart expressions are
 interpreted, never compiled, and `href` channels are dropped.
+### 7.2 People and memberships
+
+Status: proposed. Lets one human hold many reports in one place. It adds
+a holder of capabilities. It adds no new permission model: what a person
+can do on a report is exactly what the links behind their memberships
+allow.
+
+**Person.** A person has a stable `person_id`, a display name, and a
+**person token** (`bvp_…`). The operator creates people
+(`bevis people create <name>`), as with agent keys; the token is shown
+once and only its SHA-256 hash is stored. Sign-up and login by email or
+OIDC are out of scope for v1. A verified identity can later attach to a
+person without changing memberships, through the `author.verified` field
+(§6.1). A person token authenticates as a `Bearer`, over the same REST
+and MCP interfaces (§9). In the web view it travels in the URL fragment,
+like a link (§7.1), so it is never sent to the server in a URL.
+
+A person token cannot create reports in v1 (open item below). Agent keys
+are unchanged and are not linked to people.
+
+**Membership.** A membership ties a person to one link. It stores no role
+of its own:
+
+- `person_id`, `link_id`, `report_id`, `created_at`.
+- `UNIQUE(person_id, link_id)`.
+
+Role, disclosure level, scope, expiry and revocation all come from the
+link, and are read when the request is made. A link that is revoked or
+expired stops granting access through every membership, at once.
+
+**Effective access on a report.** A person with several memberships on
+one report gets the union of what those links grant: the highest role,
+the widest disclosure level, and the draft if any link sees it. This
+never exceeds what the person could do by holding those same links
+themselves. A request through a person token with no live membership on
+the report is 404, as for any credential that cannot see it (§9).
+
+**How a membership is made.**
+
+- **Claim.** The person sends a link secret with their person token
+  (`claim_link`). The membership is created, or the existing one is
+  returned unchanged. A link that is unknown, revoked, expired, or bound
+  to another person is 404, the same as an unknown link. Claiming does
+  not consume the link; a bare link keeps working for anyone holding it.
+  The usual path: an agent calls `create_report`, hands the admin link
+  to its owner, and the owner claims it.
+- **Grant.** An admin creates a link **bound** to a person, by `person_id`
+  or name, with a role, disclosure and scope. A bound link has a
+  nullable `bound_person_id` and is accepted only with that person's
+  token, so a leaked secret is useless to anyone else. The membership
+  is created at the same time. A bound link cannot be used bare.
+- An agent cannot place a report in a person's index. `create_report`
+  has no person parameter. The `owner` field stays a label on the admin
+  link and groups nothing.
+
+**Leaving and removal.**
+
+- A person may leave a report. This deletes the membership. The link
+  stays valid, and the person can claim it again.
+- An admin sees **Members** in Share: each person with their role and
+  the link behind it. Removing a member revokes the links behind that
+  membership, so the person cannot reclaim them. If another person
+  claimed the same link, they lose access too, and Share says so before
+  it revokes. An admin cannot remove the membership they are acting
+  through, matching the rule for links (§7).
+- Revoking a person (`bevis people revoke <name>`) disables the token.
+  Memberships are kept, and `bevis people rotate <name>` issues a new
+  token that restores them.
+
+**Author identity.** Edits, comments and challenges made through a person
+token record `author` as `{kind: "human", name, verified, person_id}`.
+`person_id` is the stable identity. The self-clear test in §6.2 compares
+`person_id`. Links that are not claimed keep the display-name behavior
+in §7, with no `person_id`.
+
+**Report index.** `GET /api/me/reports` (MCP: `list_my_reports`) returns,
+for each report the person can see:
+
+- `id`, `title`, `role`, `latest_version`, and `revision` (draft
+  holders only);
+- `unpublished_changes`: the draft is ahead of the latest version
+  (draft holders only);
+- `pending_suggestions` (draft holders only);
+- `needs_review`: blocks flagged under §6.2 (draft holders only);
+- `open_challenges`, split into `awaiting_me` and `awaiting_agent`
+  (commenters and up);
+- `unresolved_pins` (draft holders only);
+- `last_activity`.
+
+A count is `null`, not 0, for a role that cannot see that data, so the
+index never discloses state a person could not read in the report.
+Counts respect the membership's disclosure level, scope, and version.
+
+`GET /api/me/inbox` (MCP: `list_my_inbox`) returns the same facts as a
+flat list of items that need the person's action (a suggestion to
+accept, a challenge to answer, a block to review, a draft ready to
+publish), newest first, each with its report id and a link into the
+report. It lists only items the person's role can act on: an editor sees
+a suggestion to accept, a suggester does not.
+
+**Web view.** `/view` with a person token and no report shows the index:
+reports as rows with those counts, an Inbox tab, and an "Add a report"
+field that takes a link. Selecting a report opens the existing view with
+that membership's access. A person token in the URL is a wider
+capability than a link, so the page offers "Sign out", which clears the
+fragment and any local copy. Existing `#key=<link>` URLs keep working
+unchanged.
+
+**Activity log.** Entries (§6.1) for `claim_link`, `grant`,
+`remove_member`, and `leave_report` record the person and the link. They
+appear in the report's log for admins, not in the person's own view.
+
+**Storage.** New tables `persons` (`id`, `name`, `token_hash`,
+`created_at`, `revoked_at`) and `memberships` (§11). `links` gains a
+nullable `bound_person_id`. This is a schema version bump with a
+migration on open.
+
+**Open items.**
+
+- Whether a person can create a report directly, and with which role.
+- Notifications (email or chat when a challenge opens) need a verified
+  address, so they wait for OIDC.
+- Whether an inbox item should be dismissible, or is always derived from
+  current state. Derived is simpler and cannot go stale.
+- Token storage in the browser for returning to the index without
+  pasting the person token each time.
+
 ---
 
 ## 8. Challenges and comments
@@ -632,7 +872,8 @@ Both send `Authorization: Bearer <agent key or link>`. Tools:
 operations at once), `validate_report` (validate or preview ops without
 storing), `suggest_edit`, `list_suggestions`, `accept_edit`,
 `reject_edit`, `publish`, `add_comment`, `list_comments`,
-`list_open_challenges`, `get_challenge`, and `reply_to_challenge`.
+`list_open_challenges`, `get_challenge`, `reply_to_challenge`, and, for
+person tokens, `claim_link`, `list_my_reports`, and `list_my_inbox`.
 
 Errors are `{"error": {"code", "message", "details"}}`, with HTTP status
 401 (no or bad credential), 403 (role too low), 404 (unknown, or not
@@ -829,8 +1070,8 @@ Layout:
 `reports` (holding the draft as one JSON document, with its revision and
 latest validation), `versions` (immutable snapshots), `evidence` (one row
 per version, rows as JSON), `evidence_runs`, `suggestions`, `comments`,
-`activity`, `credentials` (agent keys and links), `challenges`, and
-`challenge_events`. The schema is in `src/bevis/host/db.py`.
+`activity`, `credentials` (agent keys and links), `persons`,
+`memberships`, `challenges`, and `challenge_events`. The schema is in `src/bevis/host/db.py`.
 
 A report is small (dozens of blocks), and every edit validates the whole
 draft. So the draft is read and written whole, and history lives in the
