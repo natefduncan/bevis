@@ -180,17 +180,16 @@ def test_a_later_person_edit_near_the_claim_takes_the_flag_over(host, agent, edi
     assert state(editor, published)["b2"]["needs_review"]["edited_by"]["name"] == "dana"
 
 
-def test_accepting_a_suggestion_near_a_claim_flags_it_for_a_person(host, agent, other_agent, editor, published):  # noqa: F811
+def test_accepting_a_suggestion_never_flags_a_block(host, agent, other_agent, editor, published):  # noqa: F811
     sug = other_agent.post(f"/api/reports/{published}/suggestions",
                            {"ops": [text("b2", B2.replace("broad", "wide"))], "message": "reword"}, expect=201)
-    editor.post(f"/api/reports/{published}/suggestions/{sug['id']}/accept")
-    flag = state(editor, published)["b2"]["needs_review"]
-    assert flag["edited_by"]["name"] == "nate"  # the accepting editor, as if they had made the edit
+    editor.post(f"/api/reports/{published}/suggestions/{sug['id']}/accept")  # a person accepting
+    assert state(editor, published)["b2"]["needs_review"] is None
 
     sug = other_agent.post(f"/api/reports/{published}/suggestions",
                            {"ops": [text("b4", B4.replace("dropped", "fell"))], "message": "reword"}, expect=201)
-    agent.post(f"/api/reports/{published}/suggestions/{sug['id']}/accept")
-    assert state(agent, published)["b4"]["needs_review"] is None  # an agent accepting is not a person's edit
+    agent.post(f"/api/reports/{published}/suggestions/{sug['id']}/accept")  # an agent accepting
+    assert state(agent, published)["b4"]["needs_review"] is None
 
 
 def test_a_suggester_creates_no_flag_by_suggesting(host, agent, nate, published):  # noqa: F811
@@ -337,10 +336,3 @@ def test_a_flagged_new_block_has_no_earlier_text(editor, published):  # noqa: F8
     editor.post(f"/api/reports/{published}/edits", {"ops": [
         text("b20", "[Revenue fell 12.0%]{#c9}."), {"op": "link_claim", "claim": claim_}]})
     assert state(editor, published)["b20"]["needs_review"]["from"] is None
-
-
-def test_an_accepted_suggestion_flags_from_the_text_before_it(host, agent, other_agent, editor, published):  # noqa: F811
-    sug = other_agent.post(f"/api/reports/{published}/suggestions",
-                           {"ops": [text("b2", B2.replace("broad", "wide"))], "message": "reword"}, expect=201)
-    editor.post(f"/api/reports/{published}/suggestions/{sug['id']}/accept")
-    assert state(editor, published)["b2"]["needs_review"]["from"] == B2

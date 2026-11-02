@@ -832,9 +832,9 @@ class Service:
                 raise HostError(409, "not_open", f"suggestion {sid} is already {row['status']}")
             result: dict[str, Any] = {}
             if accept:
-                # Validated again on accept; a failing claim is allowed through (SPEC §5).
-                result = self._apply(conn, report, loads(row["ops"]), loads(row["author"]),
-                                     flag_by=p.author() if p.author_kind == "human" else None)
+                # Validated again on accept; a failing claim is allowed through (SPEC §5). Accepting is
+                # itself a review, so it never flags the block (SPEC §6.2).
+                result = self._apply(conn, report, loads(row["ops"]), loads(row["author"]))
             status = "accepted" if accept else "rejected"
             conn.execute(
                 "UPDATE suggestions SET status = ?, resolved_at = ?, resolved_by = ?, note = ? WHERE id = ?",

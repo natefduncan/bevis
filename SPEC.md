@@ -635,10 +635,8 @@ by this rule.
   the reviewer reads the new text first. Clearing a block that is not
   flagged is 409 `not_flagged`. Clearing changes no content, so the
   report's `revision` does not move.
-- Accepting a suggestion that is near a claim also sets the flag, as the
-  accepting editor's own edit would, when a person accepts it. An agent
-  that accepts a suggestion on its own report sets none. The flag names
-  the accepting person, so clearing it is a self-clear if they clear it.
+- Accepting a suggestion never sets the flag, whoever accepts it:
+  accepting is itself a review of the change.
 
 **Activity log.** Edits are logged as they are today (`add_block`,
 `update_block`, `link_claim`, `update_claim`, `unlink_claim`, ...). Two

@@ -1103,12 +1103,8 @@ async function openSuggestion(id) {
     try {
       const out = await api(`/api/reports/${rid}/suggestions/${encodeURIComponent(id)}/${accept ? "accept" : "reject"}`,
         { method: "POST", body: { note: note.value.trim() } });
-      const touched = Object.entries(out.blocks || {});
-      if (accept && touched.length) {
-        state.flash = { block: touched[0][0], text: touched.some(([, v]) => v.needs_review)
-          ? "Accepted. The edit is near a claim, so an admin has to review it before the report can be published."
-          : "Accepted." };
-      }
+      const touched = Object.keys(out.blocks || {});
+      if (accept && touched.length) state.flash = { block: touched[0], text: "Accepted." };
       const y = window.scrollY;
       await loadReport();
       window.scrollTo(0, y);
@@ -1118,7 +1114,6 @@ async function openSuggestion(id) {
     }
   };
   const errors = preview?.validation?.counts?.errors ?? 0;
-  const nearClaim = blocks.some((c) => state.report.claims.some((k) => k.block_id === c.id));
   fill($("panel-body"),
     h("p", {}, h("span", { class: `chip ${SUGGESTION_CLASS[s.status] || ""}`, text: s.status }),
       preview?.validation ? h("span", { class: `chip ${errors ? "error" : "ok"}`, text: errors ? plural(errors, "error") : "no errors" }) : null),
@@ -1131,7 +1126,6 @@ async function openSuggestion(id) {
     (diff.claims || []).length ? h("article", { class: "message-card" }, h("p", { class: "meta", text: "Claims" }),
       h("ul", {}, diff.claims.map((c) => h("li", {}, `${c.id}: ${!c.before ? "added" : !c.after ? "removed" : "changed"}`)))) : null,
     s.status === "open" && atLeast("editor") ? [
-      nearClaim ? h("p", { class: "meta", text: "This edit is near a claim: once accepted, an admin has to review it before the report can be published." }) : null,
       h("label", { class: "field" }, "Note", note),
       status,
       h("div", { class: "actions" },
