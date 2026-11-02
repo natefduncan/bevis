@@ -6,6 +6,8 @@
 // is inserted with textContent; the only HTML inserted is the server's
 // sanitized rendering of text blocks.
 
+import { diffWords, merge3, splitSpans } from "./textdiff.js";
+
 const PAGE_SIZE = 50;
 const FULL_TABLE_ROWS = 25;
 const STATUS_LABEL = { ok: "verified", unverified: "not verified", warning: "warning", error: "failed" };
@@ -1061,7 +1063,8 @@ function upsertOp(block, text) {
 
 function openEditor(block) {
   const ed = { text: block.text, base: blockRevision(block.id), original: block.text, findings: null,
-    conflict: null, error: null, saving: false, seq: 0, restored: false };
+    conflict: null, error: null, saving: false, seq: 0, restored: false, leftover: [],
+    claimIds: new Set(state.report.claims.filter((c) => c.block_id === block.id).map((c) => c.id)) };
   try {
     const saved = JSON.parse(remembered(stashKey(block.id)) || "null");
     if (saved && typeof saved.text === "string" && saved.text !== block.text) {
@@ -1131,6 +1134,29 @@ function paintEditor(block, ed) {
       h("p", { class: "finding" }, h("span", { class: `chip ${f.severity}`, text: f.severity }), " ",
         f.claim ? h("code", { text: f.claim }) : null, f.claim ? " " : null, f.message)));
   fill(root.querySelector(".edit-conflict"), ed.conflict ? conflictNotice(block, ed) : null);
+  fill(root.querySelector(".edit-leftover"), ed.leftover.length ? h("div", { class: "notice" },
+    h("p", { class: "meta", text: "Your version of what you both changed (copy from it, then dismiss):" }),
+    ed.leftover.map((t) => h("pre", { class: "current-text", text: t })),
+    h("button", { class: "quiet", type: "button", text: "Dismiss", onclick: () => { ed.leftover = []; paintEditor(block, ed); } })) : null);
+}
+
+function diffView(from, to) {
+  return h("p", { class: "diff" }, diffWords(from, to).map((d) =>
+    d.type === "eq" ? d.text : h(d.type === "ins" ? "ins" : "del", { text: d.text })));
+}
+
+function applyText(block, ed, text, base, claims) {
+  // Put `text` in the editor, as the text that was current at revision `base`.
+  ed.text = text;
+  ed.original = ed.conflict?.block?.text ?? ed.original;
+  ed.base = base;
+  ed.conflict = null;
+  ed.findings = null;
+  ed.claimIds = new Set(claims.map((c) => c.id));
+  stash(block.id, ed.text === ed.original ? null : ed);
+  setFieldText($("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`), text, ed.claimIds);
+  paintEditor(block, ed);
+  schedulePreview(block, ed, 0);
 }
 
 function conflictNotice(block, ed) {
@@ -1140,20 +1166,25 @@ function conflictNotice(block, ed) {
       h("p", { text: "This block was deleted while you were editing it. Your text is kept below." }),
       h("button", { class: "toggle", type: "button", text: "Discard my text", onclick: () => closeEditor(block) }));
   }
+  // The text you started from, yours, and the current one: merge by paragraph where it is safe.
+  const merged = merge3(ed.original, ed.text, c.block.text);
+  const clean = merged.conflicts.length === 0;
   return h("div", { class: "notice error", role: "alert" },
     h("p", {}, `This block changed while you were editing it (revision ${c.base_revision} → ${c.revision}). Your text is kept.`),
-    h("p", { class: "meta", text: "Current text:" }),
-    h("pre", { class: "current-text", text: c.block.text }),
+    h("p", { class: "meta", text: "What changed since you started:" }),
+    diffView(ed.original, c.block.text),
+    clean ? null : h("p", { class: "message", text: `${merged.conflicts.length === 1 ? "A paragraph" : `${merged.conflicts.length} places`} you both changed. A merge keeps the current version of ${merged.conflicts.length === 1 ? "it" : "them"} and leaves yours below to copy from.` }),
     h("div", { class: "actions" },
+      h("button", { class: "toggle primary", type: "button", text: clean ? "Merge" : "Merge, keeping theirs where we clash",
+        title: "Combine your changes with the current text, then review it before saving",
+        onclick: () => {
+          ed.leftover = merged.conflicts.map((x) => x.mine.join("\n\n"));
+          applyText(block, ed, merged.text, c.revision, c.claims);
+        } }),
       h("button", { class: "toggle", type: "button", text: "Keep mine", title: "Save my text over the current one",
         onclick: () => { ed.base = c.revision; ed.conflict = null; saveBlock(block, ed); } }),
       h("button", { class: "toggle", type: "button", text: "Use current text", title: "Replace my text with the current one",
-        onclick: () => {
-          ed.base = c.revision; ed.original = c.block.text; ed.text = c.block.text; ed.conflict = null; ed.findings = null;
-          stash(block.id, null);
-          $("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`).value = ed.text;
-          paintEditor(block, ed);
-        } })));
+        onclick: () => applyText(block, ed, c.block.text, c.revision, c.claims) })));
 }
 
 async function saveBlock(block, ed) {
@@ -1179,30 +1210,83 @@ async function saveBlock(block, ed) {
   }
 }
 
+// A claim span in the editor is a chip that cannot be typed into. It carries the span's whole
+// Markdown source, so what is saved is exactly what was loaded. Where the browser cannot edit
+// plain text in a contenteditable, the editor is a plain textarea of Markdown instead.
+const richSupported = (() => {
+  const d = document.createElement("div");
+  d.setAttribute("contenteditable", "plaintext-only");
+  return d.contentEditable === "plaintext-only";
+})();
+
+function chipEl(span) {
+  return h("span", { class: "claim-chip", contenteditable: "false", role: "button", tabindex: "0",
+    "data-src": span.source, "data-claim": span.id,
+    title: `Claim ${span.id}: locked. Click to see its evidence.`,
+    onclick: () => openClaim(span.id),
+    onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openClaim(span.id); } } },
+  span.inner, h("sup", { text: span.id }));
+}
+
+const isRich = (field) => field.classList.contains("rich-field");
+
+function setFieldText(field, text, ids) {
+  if (!isRich(field)) { field.value = text; return; }
+  field.replaceChildren(...splitSpans(text, ids).map((p) => (p.span ? chipEl(p.span) : document.createTextNode(p.text))));
+}
+
+function fieldText(field) {
+  if (!isRich(field)) return field.value;
+  let out = "";
+  const walk = (node) => {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) out += n.nodeValue;
+      else if (n.dataset?.src !== undefined) out += n.dataset.src;
+      else if (n.nodeName === "BR") { if (!(node === field && n === node.lastChild)) out += "\n"; }
+      else if (n.nodeName === "DIV" || n.nodeName === "P") { if (out && !out.endsWith("\n")) out += "\n"; walk(n); }
+      else walk(n);
+    }
+  };
+  walk(field);
+  // After a final newline the browser adds one more, so the empty last line shows; it is not text.
+  return out.endsWith("\n") ? out.slice(0, -1) : out;
+}
+
 function blockEditor(block) {
   const ed = state.editing.get(block.id);
   const heading = block.type === "heading";
+  const rich = !heading && richSupported;
+  const label = heading ? "Heading text" : `Text of block ${block.id}${rich ? "" : ", as Markdown"}`;
   const field = heading
-    ? h("input", { class: "edit-field", type: "text", "aria-label": "Heading text" })
-    : h("textarea", { class: "edit-field", rows: String(Math.max(4, Math.min(24, ed.text.split("\n").length + 2))),
-      spellcheck: "true", "aria-label": `Text of block ${block.id}, as Markdown` });
-  field.value = ed.text;
+    ? h("input", { class: "edit-field", type: "text", "aria-label": label })
+    : rich
+      ? h("div", { class: "edit-field rich-field", contenteditable: "plaintext-only", role: "textbox",
+        "aria-multiline": "true", "aria-label": label, spellcheck: "true" })
+      : h("textarea", { class: "edit-field", rows: String(Math.max(4, Math.min(24, ed.text.split("\n").length + 2))),
+        spellcheck: "true", "aria-label": label });
+  setFieldText(field, ed.text, ed.claimIds);
   field.addEventListener("input", () => {
-    ed.text = field.value;
+    ed.text = fieldText(field);
     ed.restored = false;
     stash(block.id, ed);
     paintEditor(block, ed);
     schedulePreview(block, ed);
   });
   field.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!$("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-save`).disabled) saveBlock(block, ed); }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      if (!$("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-save`).disabled) saveBlock(block, ed);
+    }
   });
-  const claims = state.report.claims.filter((c) => c.block_id === block.id);
+  const hasClaims = ed.claimIds.size > 0;
   const el = h("div", { class: "block-editor" },
-    claims.length ? h("p", { class: "meta", text: "This block has claims. Text inside [ ]{#cN} is what the validator checks, and an edit near a claim needs an admin's review before the report is published." }) : null,
+    hasClaims ? h("p", { class: "meta", text: rich
+      ? "Claims are locked: click one to see its evidence. An edit near a claim needs an admin's review before the report is published."
+      : "This block has claims. Text inside [ ]{#cN} is what the validator checks, and an edit near a claim needs an admin's review before the report is published." }) : null,
     field,
     h("div", { class: "edit-status", role: "status", "aria-live": "polite" }),
     h("div", { class: "edit-conflict" }),
+    h("div", { class: "edit-leftover" }),
     h("div", { class: "actions" },
       h("button", { class: "toggle primary edit-save", type: "button", text: "Save", disabled: true, onclick: () => saveBlock(block, ed) }),
       h("button", { class: "toggle", type: "button", text: "Cancel", onclick: () => {
