@@ -6,6 +6,7 @@ on the MCP connection.
 
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Any, Callable
 
@@ -70,8 +71,12 @@ def create_mcp(service: Service) -> MCPServer:
         auth = headers.get("authorization") or headers.get("Authorization")
         secret = auth[7:].strip() if auth and auth.lower().startswith("bearer ") else None
 
+        # A person token is narrowed to the report the tool names, as REST does from the path.
+        params = list(inspect.signature(fn).parameters)
+        rid = args[0] if len(params) > 1 and params[1] == "rid" and args else kwargs.get("rid")
+
         def run() -> Any:
-            return fn(service.authenticate(secret), *args, **kwargs)
+            return fn(service.authenticate(secret, rid if isinstance(rid, str) else None), *args, **kwargs)
 
         try:
             return await anyio.to_thread.run_sync(run)
@@ -191,5 +196,21 @@ def create_mcp(service: Service) -> MCPServer:
         """Answer a challenge: explain with `body`, and optionally propose a fix as `ops`, which becomes a
         suggestion for an editor to review. A person resolves the challenge; you cannot close it."""
         return await call(ctx, service.reply_to_challenge, report_id, challenge_id, body, ops, message)
+
+    @mcp.tool()
+    async def claim_link(link: str, ctx: Context) -> dict:
+        """Add the report behind a link to your reports (person tokens). The link keeps working for others."""
+        return await call(ctx, service.claim_link, link)
+
+    @mcp.tool()
+    async def list_my_reports(ctx: Context) -> list[dict]:
+        """Every report you hold a link to, with your role and what needs attention on each (person tokens)."""
+        return await call(ctx, service.my_reports)
+
+    @mcp.tool()
+    async def list_my_inbox(ctx: Context) -> list[dict]:
+        """What needs you to act, newest first: suggestions to accept, challenges to answer, drafts ready to
+        publish (person tokens)."""
+        return await call(ctx, service.my_inbox)
 
     return mcp

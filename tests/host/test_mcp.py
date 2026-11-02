@@ -189,3 +189,29 @@ def test_tool_errors_are_the_error_object(server):
         assert not err, out
 
     run(flow)
+
+
+def test_a_person_claims_and_reads_over_mcp(server):
+    url, service = server
+    key = service.create_agent_key("owner-agent")
+    agent = service.authenticate(key["secret"])
+    created = service.create_report(agent, "Person over MCP", "Nate")
+    admin = service.authenticate(created["admin_link"])
+    assert admin.role == "admin"
+    run = session(url, service.create_person("mcp-nate")["secret"])
+
+    async def flow(s):
+        err, reports = await call(s, "list_my_reports")
+        assert not err and reports == []
+        err, out = await call(s, "get_report", report_id=created["id"])
+        assert err and "not_found" in out  # no membership yet: 404, as for any credential
+        err, claimed = await call(s, "claim_link", link=created["admin_link"])
+        assert not err and claimed["role"] == "admin" and claimed["created"] is True
+        err, report = await call(s, "get_report", report_id=created["id"])
+        assert not err and report["role"] == "admin"
+        err, reports = await call(s, "list_my_reports")
+        assert not err and [r["id"] for r in reports] == [created["id"]]
+        err, inbox = await call(s, "list_my_inbox")
+        assert not err and isinstance(inbox, list)
+
+    run(flow)

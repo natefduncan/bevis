@@ -37,6 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     keys.add_parser("list", help="list agent keys")
     revoke = keys.add_parser("revoke", help="revoke an agent key")
     revoke.add_argument("id")
+    people = commands.add_parser("people", help="manage people (a human's token for their reports)").add_subparsers(
+        dest="action", required=True)
+    pcreate = people.add_parser("create", help="create a person and print their token once")
+    pcreate.add_argument("name", help="who they are, e.g. nate")
+    people.add_parser("list", help="list people")
+    for action, what in (("revoke", "disable a person's token (memberships stay)"),
+                         ("rotate", "issue a new token, replacing the old one and lifting a revocation")):
+        sub = people.add_parser(action, help=what)
+        sub.add_argument("person", help="name or id")
     args = parser.parse_args(argv)
 
     if args.command == "validate":
@@ -45,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args)
     if args.command == "keys":
         return _keys(args)
+    if args.command == "people":
+        return _people(args)
     if args.command == "backup":
         return _backup(args)
     try:
@@ -140,6 +151,29 @@ def _keys(args) -> int:
         except HostError as e:
             print(f"bevis: {e.message}", file=sys.stderr)
             return 1
+    return 0
+
+
+def _people(args) -> int:
+    from .host.config import Settings
+    from .host.service import HostError, Service
+
+    service = Service(Settings.from_env())
+    try:
+        if args.action in ("create", "rotate"):
+            person = service.create_person(args.name) if args.action == "create" else service.rotate_person(args.person)
+            print(f"{person['id']}  {person['name']}")
+            print(person["secret"])
+            print("bevis: the token is shown once; the person opens /view with it", file=sys.stderr)
+        elif args.action == "list":
+            for person in service.list_people():
+                print(f"{person['id']}  {person['name']}  created {person['created_at']}"
+                      + (f"  revoked {person['revoked_at']}" if person["revoked_at"] else ""))
+        else:
+            service.revoke_person(args.person)
+    except HostError as e:
+        print(f"bevis: {e.message}", file=sys.stderr)
+        return 1
     return 0
 
 

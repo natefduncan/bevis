@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE reports (
@@ -152,6 +152,30 @@ MIGRATIONS = [
 
     CREATE INDEX challenges_report ON challenges (report_id, status);
     CREATE INDEX challenge_events_challenge ON challenge_events (challenge_id, seq);
+    """,
+    # 2 -> 3: people and memberships (SPEC §7.2)
+    """
+    CREATE TABLE persons (
+        id               TEXT PRIMARY KEY,
+        name             TEXT NOT NULL UNIQUE,
+        token_hash       TEXT NOT NULL UNIQUE,   -- SHA-256 of the person token; the token is never stored
+        created_at       TEXT NOT NULL,
+        revoked_at       TEXT
+    );
+
+    CREATE TABLE memberships (
+        id               TEXT PRIMARY KEY,
+        person_id        TEXT NOT NULL REFERENCES persons(id),
+        link_id          TEXT NOT NULL REFERENCES credentials(id),
+        report_id        TEXT NOT NULL REFERENCES reports(id),
+        created_at       TEXT NOT NULL,
+        UNIQUE (person_id, link_id)
+    );
+
+    ALTER TABLE credentials ADD COLUMN bound_person_id TEXT REFERENCES persons(id);
+
+    CREATE INDEX memberships_person ON memberships (person_id);
+    CREATE INDEX memberships_report ON memberships (report_id);
     """,
 ]
 

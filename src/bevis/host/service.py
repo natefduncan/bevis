@@ -126,23 +126,118 @@ class Service:
             if cur.rowcount == 0:
                 raise _not_found(f"agent key {cred_id}")
 
-    def authenticate(self, secret: str | None) -> Principal:
-        if not secret:
-            raise HostError(401, "unauthenticated", "send Authorization: Bearer <agent key or link token>")
+    # -- people (SPEC §7.2) -------------------------------------------------------------
+
+    def create_person(self, name: str) -> dict:
+        """Not exposed over the API: run `bevis people create`."""
+        if not isinstance(name, str) or not name.strip():
+            raise HostError(422, "invalid", "a person needs a name")
+        name = " ".join(name.split())
+        token = new_secret("bvp")
+        pid = new_id("per")
+        with self.db.write() as conn:
+            if conn.execute("SELECT 1 FROM persons WHERE name = ?", (name,)).fetchone():
+                raise HostError(409, "exists", f"a person named {name} already exists")
+            conn.execute("INSERT INTO persons (id, name, token_hash, created_at) VALUES (?, ?, ?, ?)",
+                         (pid, name, hash_secret(token), now()))
+        return {"id": pid, "name": name, "secret": token}
+
+    def list_people(self) -> list[dict]:
         with self.db.read() as conn:
-            row = conn.execute("SELECT * FROM credentials WHERE secret_hash = ?", (hash_secret(secret),)).fetchone()
-        if row is None or row["revoked_at"] or (row["expires_at"] and row["expires_at"] <= now()):
-            raise HostError(401, "unauthenticated", "unknown, revoked, or expired credential")
+            rows = conn.execute("SELECT id, name, created_at, revoked_at FROM persons ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+    def _person_row(self, conn: sqlite3.Connection, ref: str, live: bool = False) -> sqlite3.Row:
+        row = conn.execute("SELECT * FROM persons WHERE id = ? OR name = ?", (ref, ref)).fetchone()
+        if row is None or (live and row["revoked_at"]):
+            raise _not_found(f"person {ref}")
+        return row
+
+    def revoke_person(self, ref: str) -> None:
+        """Disable the token. Memberships stay, so `rotate_person` can restore them."""
+        with self.db.write() as conn:
+            row = self._person_row(conn, ref, live=True)
+            conn.execute("UPDATE persons SET revoked_at = ? WHERE id = ?", (now(), row["id"]))
+
+    def rotate_person(self, ref: str) -> dict:
+        """A new token (the old one stops working); lifts a revocation."""
+        token = new_secret("bvp")
+        with self.db.write() as conn:
+            row = self._person_row(conn, ref)
+            conn.execute("UPDATE persons SET token_hash = ?, revoked_at = NULL WHERE id = ?",
+                         (hash_secret(token), row["id"]))
+        return {"id": row["id"], "name": row["name"], "secret": token}
+
+    def _live_links(self, conn: sqlite3.Connection, person_id: str) -> dict[str, list[sqlite3.Row]]:
+        """The person's links that still grant access, by report: revoked and expired ones drop out."""
+        rows = conn.execute(
+            "SELECT c.* FROM memberships m JOIN credentials c ON c.id = m.link_id"
+            " WHERE m.person_id = ? AND c.kind = 'link' AND c.revoked_at IS NULL"
+            " AND (c.expires_at IS NULL OR c.expires_at > ?) ORDER BY m.created_at, m.id", (person_id, now())).fetchall()
+        out: dict[str, list[sqlite3.Row]] = {}
+        for r in rows:
+            out.setdefault(r["report_id"], []).append(r)
+        return out
+
+    def _person_on(self, person: Principal, rid: str, links: list[sqlite3.Row]) -> Principal:
+        """The person's access to one report: the most capable single link, so mixing links never
+        grants a combination (a role at one link's disclosure, say) that no link gives."""
+        def capability(link: sqlite3.Row) -> tuple:
+            scope = link["scope"]
+            number = int(scope) if scope.isdigit() else 0
+            return (RANK[link["role"]], -DISCLOSURES.index(link["disclosure"] or "full"),
+                    {"draft": 2, "latest": 1}.get(scope, 0), number)
+
+        best = max(links, key=capability)
         return Principal(
-            credential_id=row["id"],
-            kind=row["kind"],
-            name=row["name"],
-            author_kind=row["author_kind"],
-            report_id=row["report_id"],
-            role=row["role"],
-            disclosure=row["disclosure"] or "full",
-            scope=row["scope"],
-        )
+            credential_id=person.person_id, kind="person", name=person.name, author_kind="human",
+            report_id=rid, role=best["role"], disclosure=best["disclosure"] or "full", scope=best["scope"],
+            person_id=person.person_id, link_ids=(best["id"],))
+
+    def for_report(self, p: Principal, rid: str) -> Principal:
+        """A person token, narrowed to one report. Other principals pass through. With no live
+        membership the person stays unresolved, which every report check answers with 404."""
+        if p.kind != "person" or p.report_id == rid:
+            return p
+        with self.db.read() as conn:
+            links = self._live_links(conn, p.person_id).get(rid)
+        bare = Principal(credential_id=p.person_id, kind="person", name=p.name, author_kind="human",
+                         person_id=p.person_id)
+        return self._person_on(bare, rid, links) if links else bare
+
+    def authenticate(self, secret: str | None, rid: str | None = None) -> Principal:
+        if not secret:
+            raise HostError(401, "unauthenticated",
+                            "send Authorization: Bearer <agent key, link token, or person token>")
+        digest = hash_secret(secret)
+        with self.db.read() as conn:
+            row = conn.execute("SELECT * FROM credentials WHERE secret_hash = ?", (digest,)).fetchone()
+            person = None if row else conn.execute("SELECT * FROM persons WHERE token_hash = ?", (digest,)).fetchone()
+        if row is not None:
+            if row["revoked_at"] or (row["expires_at"] and row["expires_at"] <= now()):
+                raise HostError(401, "unauthenticated", "unknown, revoked, or expired credential")
+            if row["bound_person_id"]:
+                raise HostError(401, "unauthenticated", "this link is bound to a person; use that person's token")
+            return Principal(
+                credential_id=row["id"],
+                kind=row["kind"],
+                name=row["name"],
+                author_kind=row["author_kind"],
+                report_id=row["report_id"],
+                role=row["role"],
+                disclosure=row["disclosure"] or "full",
+                scope=row["scope"],
+                link_ids=(row["id"],),
+            )
+        if person is None or person["revoked_at"]:
+            raise HostError(401, "unauthenticated", "unknown, revoked, or expired credential")
+        base = Principal(credential_id=person["id"], kind="person", name=person["name"], author_kind="human",
+                         person_id=person["id"])
+        return self.for_report(base, rid) if rid else base
+
+    def _need_person(self, p: Principal) -> None:
+        if p.kind != "person":
+            raise HostError(403, "forbidden", "this needs a person token")
 
     # -- access ------------------------------------------------------------------------
 
@@ -280,24 +375,33 @@ class Service:
     def me(self, p: Principal) -> dict:
         """Who the caller is. Never includes the secret."""
         out = {"kind": p.kind, "name": p.name, "author_kind": p.author_kind, "disclosure": p.disclosure}
-        if p.kind == "link":
+        if p.person_id:
+            out["person_id"] = p.person_id
+        if p.kind == "link" or p.report_id:
             out.update(report_id=p.report_id, role=p.role, scope=p.scope)
         return out
 
     def list_reports(self, p: Principal) -> list[dict]:
         with self.db.read() as conn:
-            if p.kind == "link":
+            if p.kind == "person":
+                links = self._live_links(conn, p.person_id)
+                rows = [r for r in conn.execute("SELECT * FROM reports ORDER BY created_at") if r["id"] in links]
+                views = {r["id"]: self._person_on(p, r["id"], links[r["id"]]) for r in rows}
+            elif p.kind == "link":
                 rows = conn.execute("SELECT * FROM reports WHERE id = ?", (p.report_id,)).fetchall()
+                views = {}
             else:
                 rows = conn.execute("SELECT * FROM reports ORDER BY created_at").fetchall()
+                views = {}
             out = []
             for r in rows:
+                q = views.get(r["id"], p)
                 latest = conn.execute("SELECT MAX(number) FROM versions WHERE report_id = ?", (r["id"],)).fetchone()[0]
                 out.append({
                     "id": r["id"],
                     "title": r["title"],
-                    "role": p.role_on(r["id"], r["creator_key"]),
-                    "revision": r["revision"] if p.sees_draft() else None,
+                    "role": q.role_on(r["id"], r["creator_key"]),
+                    "revision": r["revision"] if q.sees_draft() else None,
                     "latest_version": latest,
                 })
         return out
@@ -900,7 +1004,7 @@ class Service:
         out = []
         for r in rids:
             try:
-                out += [{"report_id": r, **c} for c in self.list_challenges(p, r, status="open")]
+                out += [{"report_id": r, **c} for c in self.list_challenges(self.for_report(p, r), r, status="open")]
             except HostError as e:
                 if rid or e.status not in (403, 404):
                     raise
@@ -1029,9 +1133,18 @@ class Service:
     # -- share links ------------------------------------------------------------------------
 
     def create_link(self, p: Principal, rid: str, role: str, name: str, *, disclosure: str = "full",
-                    scope: str | int = "latest", author_kind: str = "human", expires_at: str | None = None) -> dict:
+                    scope: str | int = "latest", author_kind: str = "human", expires_at: str | None = None,
+                    person: str | None = None) -> dict:
+        """A share link. With `person` it is bound to that person: it grants access only through their
+        membership, which is made here, so it has no secret to hand over (SPEC §7.2)."""
         with self.db.write() as conn:
             self._report_row(conn, p, rid, "admin")
+            bound = None
+            if person is not None:
+                if not isinstance(person, str) or not person.strip():
+                    raise HostError(422, "invalid", "person is a person id or name")
+                bound = self._person_row(conn, person.strip(), live=True)
+                author_kind = "human"
             if role not in ROLES:
                 raise HostError(422, "invalid", f"role is one of {', '.join(ROLES)}")
             if disclosure not in DISCLOSURES:
@@ -1059,12 +1172,24 @@ class Service:
             lid = new_id("lnk")
             conn.execute(
                 "INSERT INTO credentials (id, secret_hash, kind, name, author_kind, report_id, role, disclosure,"
-                " scope, expires_at, created_at, created_by) VALUES (?, ?, 'link', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " scope, expires_at, created_at, created_by, bound_person_id)"
+                " VALUES (?, ?, 'link', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (lid, hash_secret(secret), name, author_kind, rid, role, disclosure, str(scope), expires_at, now(),
-                 p.credential_id),
+                 p.credential_id, bound["id"] if bound else None),
             )
-            self._log(conn, rid, p.author(), "create_link", None,
-                      {"id": lid, "name": name, "role": role, "disclosure": disclosure, "scope": scope})
+            if bound:
+                conn.execute("INSERT INTO memberships (id, person_id, link_id, report_id, created_at)"
+                             " VALUES (?, ?, ?, ?, ?)", (new_id("mem"), bound["id"], lid, rid, now()))
+                self._log(conn, rid, p.author(), "grant", None,
+                          {"id": lid, "person_id": bound["id"], "person": bound["name"], "role": role,
+                           "disclosure": disclosure, "scope": scope})
+            else:
+                self._log(conn, rid, p.author(), "create_link", None,
+                          {"id": lid, "name": name, "role": role, "disclosure": disclosure, "scope": scope})
+        if bound:
+            return {"id": lid, "person_id": bound["id"], "role": role, "disclosure": disclosure, "scope": scope,
+                    "expires_at": expires_at,
+                    "note": f"{bound['name']} has it in their reports; there is no secret to share"}
         return {"id": lid, "secret": secret, "role": role, "disclosure": disclosure, "scope": scope,
                 "expires_at": expires_at, "note": "the secret is shown once"}
 
@@ -1072,12 +1197,12 @@ class Service:
         with self.db.read() as conn:
             self._report_row(conn, p, rid, "admin")
             rows = conn.execute(
-                "SELECT id, name, author_kind, role, disclosure, scope, expires_at, revoked_at, created_at"
-                " FROM credentials WHERE report_id = ? ORDER BY created_at", (rid,)).fetchall()
-        return [{**dict(r), "current": r["id"] == p.credential_id} for r in rows]
+                "SELECT id, name, author_kind, role, disclosure, scope, expires_at, revoked_at, created_at,"
+                " bound_person_id FROM credentials WHERE report_id = ? ORDER BY created_at", (rid,)).fetchall()
+        return [{**dict(r), "current": r["id"] in p.link_ids} for r in rows]
 
     def revoke_link(self, p: Principal, rid: str, link_id: str) -> dict:
-        if link_id == p.credential_id:
+        if link_id == p.credential_id or link_id in p.link_ids:
             raise HostError(409, "own_link", "you cannot revoke the link you are using; use another admin link")
         with self.db.write() as conn:
             self._report_row(conn, p, rid, "admin")
@@ -1088,6 +1213,168 @@ class Service:
                 raise _not_found(f"active link {link_id}")
             self._log(conn, rid, p.author(), "revoke_link", None, {"id": link_id})
         return {"id": link_id, "revoked": True}
+
+    # -- people: claims, members, and the index (SPEC §7.2) ---------------------------------
+
+    def claim_link(self, p: Principal, secret: str) -> dict:
+        """Add the report behind a link to this person's reports. The link keeps working for others."""
+        self._need_person(p)
+        if not isinstance(secret, str) or not secret.strip():
+            raise HostError(422, "invalid", "send the link's secret")
+        with self.db.write() as conn:
+            link = conn.execute("SELECT * FROM credentials WHERE secret_hash = ? AND kind = 'link'",
+                                (hash_secret(secret.strip()),)).fetchone()
+            if (link is None or link["revoked_at"] or (link["expires_at"] and link["expires_at"] <= now())
+                    or link["bound_person_id"] not in (None, p.person_id)):
+                raise _not_found("link")  # unknown, revoked, expired, or someone else's: all the same
+            created = conn.execute("SELECT 1 FROM memberships WHERE person_id = ? AND link_id = ?",
+                                   (p.person_id, link["id"])).fetchone() is None
+            if created:
+                conn.execute("INSERT INTO memberships (id, person_id, link_id, report_id, created_at)"
+                             " VALUES (?, ?, ?, ?, ?)", (new_id("mem"), p.person_id, link["id"], link["report_id"], now()))
+                self._log(conn, link["report_id"], p.author(), "claim_link", None,
+                          {"link_id": link["id"], "role": link["role"], "disclosure": link["disclosure"],
+                           "scope": link["scope"]})
+        return {"report_id": link["report_id"], "link_id": link["id"], "role": link["role"],
+                "disclosure": link["disclosure"], "scope": link["scope"], "created": created}
+
+    def leave_report(self, p: Principal, rid: str) -> dict:
+        """Drop the report from this person's reports. Its links stay valid; claim one again to return."""
+        self._need_person(p)
+        with self.db.write() as conn:
+            cur = conn.execute("DELETE FROM memberships WHERE person_id = ? AND report_id = ?", (p.person_id, rid))
+            if cur.rowcount == 0:
+                raise _not_found(f"report {rid}")
+            self._log(conn, rid, p.author(), "leave_report", None, {"person_id": p.person_id})
+        return {"report_id": rid, "left": True}
+
+    def _members(self, conn: sqlite3.Connection, rid: str) -> list[sqlite3.Row]:
+        return conn.execute(
+            "SELECT m.person_id, pe.name AS person, m.created_at AS since, c.id AS link_id, c.role, c.disclosure,"
+            " c.scope, (SELECT COUNT(*) FROM memberships o WHERE o.link_id = c.id) AS holders"
+            " FROM memberships m JOIN credentials c ON c.id = m.link_id JOIN persons pe ON pe.id = m.person_id"
+            " WHERE m.report_id = ? AND c.revoked_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > ?)"
+            " ORDER BY m.created_at, m.id", (rid, now())).fetchall()
+
+    def list_members(self, p: Principal, rid: str) -> list[dict]:
+        with self.db.read() as conn:
+            self._report_row(conn, p, rid, "admin")
+            rows = self._members(conn, rid)
+        return [{"person_id": r["person_id"], "name": r["person"], "link_id": r["link_id"], "role": r["role"],
+                 "disclosure": r["disclosure"], "scope": r["scope"], "since": r["since"],
+                 "shared_with": r["holders"] - 1, "current": r["link_id"] in p.link_ids} for r in rows]
+
+    def remove_member(self, p: Principal, rid: str, person_id: str) -> dict:
+        """Revoke the links behind a person's memberships. Anyone else holding one of those links loses it."""
+        with self.db.write() as conn:
+            self._report_row(conn, p, rid, "admin")
+            mine = [r for r in self._members(conn, rid) if r["person_id"] == person_id]
+            if not mine:
+                raise _not_found(f"member {person_id}")
+            links = [r["link_id"] for r in mine]
+            if person_id == p.person_id or any(l in p.link_ids for l in links):
+                raise HostError(409, "own_membership",
+                                "you cannot remove the membership you are using; use another admin")
+            also = sorted({r["person_id"] for r in self._members(conn, rid)
+                           if r["link_id"] in links and r["person_id"] != person_id})
+            stamp = now()
+            for link_id in links:
+                conn.execute("UPDATE credentials SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                             (stamp, link_id))
+            self._log(conn, rid, p.author(), "remove_member", None,
+                      {"person_id": person_id, "links": links, "also_removed": also})
+        return {"person_id": person_id, "revoked_links": links, "also_removed": also}
+
+    def _report_summary(self, conn: sqlite3.Connection, q: Principal, r: sqlite3.Row) -> dict:
+        """One row of the person's index, as the person's access on that report sees it. A count the
+        role cannot read is None, not 0, so the index never shows state the report would not."""
+        rid, role = r["id"], q.role
+        latest = conn.execute("SELECT MAX(number) FROM versions WHERE report_id = ?", (rid,)).fetchone()[0]
+        holds_draft = q.sees_draft()
+        out: dict[str, Any] = {"id": rid, "title": r["title"], "role": role, "latest_version": latest,
+                               "revision": r["revision"] if holds_draft else None}
+        draft = loads(r["draft"])
+        if holds_draft:
+            if latest is None:
+                changes = bool(draft["blocks"])
+            else:
+                v = conn.execute("SELECT title, content FROM versions WHERE report_id = ? AND number = ?",
+                                 (rid, latest)).fetchone()
+                changes = r["title"] != v["title"] or _content(draft) != loads(v["content"])
+            findings = loads(r["draft_validation"])["findings"]
+            out.update(
+                unpublished_changes=changes,
+                pending_suggestions=conn.execute(
+                    "SELECT COUNT(*) FROM suggestions WHERE report_id = ? AND status = 'open'", (rid,)).fetchone()[0],
+                needs_review=0,  # nothing sets the flag until human editing lands (§6.2)
+                unresolved_pins=sum(1 for f in findings if f["code"] in ("pin.unknown", "pin.stale")),
+                last_activity=conn.execute("SELECT MAX(timestamp) FROM activity WHERE report_id = ?",
+                                           (rid,)).fetchone()[0],
+            )
+        else:
+            out.update(unpublished_changes=None, pending_suggestions=None, needs_review=None, unresolved_pins=None,
+                       last_activity=conn.execute("SELECT MAX(published_at) FROM versions WHERE report_id = ?",
+                                                  (rid,)).fetchone()[0])
+        out["open_challenges"] = None
+        if RANK[role] >= RANK["commenter"]:
+            live = self._live_challenges(conn, q, r)
+            out["open_challenges"] = {
+                "awaiting_me": sum(1 for c in live if _awaits_me(c, role)),
+                "awaiting_agent": sum(1 for c in live if c["mine"] and c["status"] == "open"),
+            }
+        return out
+
+    def _live_challenges(self, conn: sqlite3.Connection, q: Principal, r: sqlite3.Row) -> list[dict]:
+        """Open and answered challenges as this access sees them (its version, its disclosure level)."""
+        try:
+            viewing = None if q.sees_draft() else self._visible_version(conn, q, r["id"], None)
+        except HostError:
+            return []  # nothing published yet, so nothing to have challenged
+        rows = conn.execute("SELECT * FROM challenges WHERE report_id = ? AND status IN ('open', 'answered')"
+                            " ORDER BY created_at", (r["id"],)).fetchall()
+        return [c for c in (self._challenge(conn, q, q.role, row, viewing) for row in rows) if c is not None]
+
+    def my_reports(self, p: Principal) -> list[dict]:
+        """The person's index: every report they hold a live link to, most recently active first."""
+        self._need_person(p)
+        with self.db.read() as conn:
+            links = self._live_links(conn, p.person_id)
+            rows = [r for r in conn.execute("SELECT * FROM reports ORDER BY created_at") if r["id"] in links]
+            out = [self._report_summary(conn, self._person_on(p, r["id"], links[r["id"]]), r) for r in rows]
+        return sorted(out, key=lambda o: o["last_activity"] or "", reverse=True)
+
+    def my_inbox(self, p: Principal) -> list[dict]:
+        """What needs this person to act, newest first. Derived from current state, so it cannot go stale."""
+        self._need_person(p)
+        items: list[dict] = []
+        with self.db.read() as conn:
+            links = self._live_links(conn, p.person_id)
+            for r in conn.execute("SELECT * FROM reports ORDER BY created_at"):
+                if r["id"] not in links:
+                    continue
+                q = self._person_on(p, r["id"], links[r["id"]])
+                rid, role = r["id"], q.role
+                if RANK[role] >= RANK["editor"]:
+                    for s_ in conn.execute("SELECT * FROM suggestions WHERE report_id = ? AND status = 'open'", (rid,)):
+                        items.append({"kind": "suggestion", "report_id": rid, "id": s_["id"],
+                                      "summary": s_["message"], "author": loads(s_["author"]),
+                                      "at": s_["created_at"], "open": {"report": rid, "suggestion": s_["id"]}})
+                if RANK[role] >= RANK["commenter"]:
+                    for c in self._live_challenges(conn, q, r):
+                        if _awaits_me(c, role):
+                            items.append({"kind": "challenge", "report_id": rid, "id": c["id"],
+                                          "summary": c["body"], "author": c["author"], "status": c["status"],
+                                          "at": c["updated_at"], "open": {"report": rid, "challenge": c["id"]}})
+                if RANK[role] >= RANK["editor"]:
+                    summary = self._report_summary(conn, q, r)
+                    clean = loads(r["draft_validation"])["counts"]["errors"] == 0
+                    if summary["unpublished_changes"] and clean and not summary["needs_review"]:
+                        items.append({"kind": "publish", "report_id": rid, "id": rid,
+                                      "summary": f"{r['title']}: the draft is ahead of "
+                                                 + (f"version {summary['latest_version']}" if summary["latest_version"]
+                                                    else "nothing published yet"),
+                                      "at": summary["last_activity"] or r["created_at"], "open": {"report": rid}})
+        return sorted(items, key=lambda i: i["at"], reverse=True)
 
 
 # -- helpers ------------------------------------------------------------------------------
@@ -1107,6 +1394,14 @@ def _chart_refs(content: dict) -> set[tuple[str, int]]:
                 if isinstance(ref, dict) and isinstance(ref.get("id"), str) and isinstance(ref.get("version"), int):
                     out.add((ref["id"], ref["version"]))
     return out
+
+
+def _awaits_me(challenge: dict, role: str) -> bool:
+    """Open challenges wait for an answer: from an editor, unless this person filed it, then from the
+    agent. An answered one waits for its filer to resolve it or reopen it."""
+    if challenge["mine"]:
+        return challenge["status"] == "answered"
+    return challenge["status"] == "open" and RANK[role] >= RANK["editor"]
 
 
 def _author(p: Principal, display_name: str | None) -> dict:

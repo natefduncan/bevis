@@ -60,8 +60,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def malformed(request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse({"error": malformed_error(exc.errors())}, status_code=422)
 
-    def principal(authorization: str | None = Header(default=None)) -> Principal:
-        return service.authenticate(bearer(authorization))
+    def principal(request: Request, authorization: str | None = Header(default=None)) -> Principal:
+        # A person token is narrowed to the report in the path, so a handler sees what a link would be.
+        return service.authenticate(bearer(authorization), request.path_params.get("rid"))
 
     P = Depends(principal)
 
@@ -104,6 +105,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/me")
     def me(p: Principal = P) -> dict:
         return service.me(p)
+
+    # a person's own reports (SPEC §7.2)
+
+    @app.post("/api/me/claims")
+    def claim_link(p: Principal = P, body: dict = Body(...)) -> dict:
+        return service.claim_link(p, body.get("link"))
+
+    @app.get("/api/me/reports")
+    def my_reports(p: Principal = P) -> list[dict]:
+        return service.my_reports(p)
+
+    @app.get("/api/me/inbox")
+    def my_inbox(p: Principal = P) -> list[dict]:
+        return service.my_inbox(p)
 
     # reports
 
@@ -244,6 +259,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             scope=body.get("scope", "latest"),
             author_kind=body.get("author_kind", "human"),
             expires_at=body.get("expires_at"),
+            person=body.get("person"),
         )
 
     @app.get("/api/reports/{rid}/links")
@@ -253,5 +269,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.delete("/api/reports/{rid}/links/{lid}")
     def revoke_link(rid: str, lid: str, p: Principal = P) -> dict:
         return service.revoke_link(p, rid, lid)
+
+    @app.post("/api/reports/{rid}/leave")
+    def leave_report(rid: str, p: Principal = P) -> dict:
+        return service.leave_report(p, rid)
+
+    @app.get("/api/reports/{rid}/members")
+    def list_members(rid: str, p: Principal = P) -> list[dict]:
+        return service.list_members(p, rid)
+
+    @app.delete("/api/reports/{rid}/members/{person_id}")
+    def remove_member(rid: str, person_id: str, p: Principal = P) -> dict:
+        return service.remove_member(p, rid, person_id)
 
     return app

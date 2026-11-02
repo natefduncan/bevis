@@ -717,17 +717,20 @@ Role, disclosure level, scope, expiry and revocation all come from the
 link, and are read when the request is made. A link that is revoked or
 expired stops granting access through every membership, at once.
 
-**Effective access on a report.** A person with several memberships on
-one report gets the union of what those links grant: the highest role,
-the widest disclosure level, and the draft if any link sees it. This
-never exceeds what the person could do by holding those same links
-themselves. A request through a person token with no live membership on
-the report is 404, as for any credential that cannot see it (§9).
+**Effective access on a report.** A person with several live memberships
+on one report acts through the **most capable single link**, ranked by
+role, then widest disclosure, then the draft over the latest version over
+a numbered one. The links are not blended: an editor link at `cited` and a
+reader link at `full` give editor at `cited`, never editor at `full`, a
+combination no link grants. A request through a person token with no
+live membership on the report is 404, as for any credential that cannot
+see it (§9). The person token is resolved to that link per request, so
+every report check sees what a link holder would.
 
 **How a membership is made.**
 
 - **Claim.** The person sends a link secret with their person token
-  (`claim_link`). The membership is created, or the existing one is
+  (`claim_link`; REST `POST /api/me/claims` with `{"link": <secret>}`). The membership is created, or the existing one is
   returned unchanged. A link that is unknown, revoked, expired, or bound
   to another person is 404, the same as an unknown link. Claiming does
   not consume the link; a bare link keeps working for anyone holding it.
@@ -735,23 +738,29 @@ the report is 404, as for any credential that cannot see it (§9).
   to its owner, and the owner claims it.
 - **Grant.** An admin creates a link **bound** to a person, by `person_id`
   or name, with a role, disclosure and scope. A bound link has a
-  nullable `bound_person_id` and is accepted only with that person's
-  token, so a leaked secret is useless to anyone else. The membership
-  is created at the same time. A bound link cannot be used bare.
+  nullable `bound_person_id`. The membership is created at the same
+  time, so a bound link has no secret to hand over, and its secret is
+  never shown. Presented bare it is 401, and another person cannot
+  claim it (404). Grant is `POST /api/reports/{id}/links` with a
+  `person` (id or name).
 - An agent cannot place a report in a person's index. `create_report`
   has no person parameter. The `owner` field stays a label on the admin
   link and groups nothing.
 
 **Leaving and removal.**
 
-- A person may leave a report. This deletes the membership. The link
-  stays valid, and the person can claim it again.
-- An admin sees **Members** in Share: each person with their role and
-  the link behind it. Removing a member revokes the links behind that
+- A person may leave a report (`POST /api/reports/{id}/leave`). This
+  deletes the membership. The link stays valid, and the person can claim
+  it again.
+- An admin sees **Members** in Share (`GET /api/reports/{id}/members`):
+  each person with their role, the link behind it, and how many others
+  share that link. Removing a member revokes the links behind that
   membership, so the person cannot reclaim them. If another person
-  claimed the same link, they lose access too, and Share says so before
-  it revokes. An admin cannot remove the membership they are acting
-  through, matching the rule for links (§7).
+  claimed the same link, they lose access too: the member list shows
+  `shared_with`, and the removal response names them in `also_removed`.
+  An admin cannot remove the membership they are acting through (409),
+  matching the rule for links (§7). The route is
+  `DELETE /api/reports/{id}/members/{person_id}`.
 - Revoking a person (`bevis people revoke <name>`) disables the token.
   Memberships are kept, and `bevis people rotate <name>` issues a new
   token that restores them.
@@ -773,7 +782,8 @@ for each report the person can see:
 - `needs_review`: blocks flagged under §6.2 (draft holders only);
 - `open_challenges`, split into `awaiting_me` and `awaiting_agent`
   (commenters and up);
-- `unresolved_pins` (draft holders only);
+- `unresolved_pins`: draft pins the validator reports as `pin.unknown` or
+  `pin.stale` (draft holders only);
 - `last_activity`.
 
 A count is `null`, not 0, for a role that cannot see that data, so the
