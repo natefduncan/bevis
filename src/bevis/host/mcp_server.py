@@ -145,9 +145,11 @@ def create_mcp(service: Service) -> MCPServer:
 
     @mcp.tool()
     async def suggest_edit(report_id: str, ops: list[dict], ctx: Context, message: str = "",
-                           base_revision: StrictInt | None = None) -> dict:
-        """Propose ops as one suggestion for an editor to accept (suggester and up)."""
-        return await call(ctx, service.suggest, report_id, ops, message, base_revision)
+                           base_revision: StrictInt | None = None,
+                           base_block_revisions: dict[str, StrictInt] | None = None) -> dict:
+        """Propose ops as one suggestion for an editor to accept (suggester and up). base_block_revisions
+        {block id: revision}, from get_report, fails it only if a block you name changed."""
+        return await call(ctx, service.suggest, report_id, ops, message, base_revision, base_block_revisions)
 
     @mcp.tool()
     async def list_suggestions(report_id: str, ctx: Context, status: str = "open") -> list[dict]:

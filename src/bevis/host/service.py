@@ -772,10 +772,11 @@ class Service:
     # -- suggestions ------------------------------------------------------------------------
 
     def suggest(self, p: Principal, rid: str, ops: list, message: str = "",
-                base_revision: int | None = None) -> dict:
+                base_revision: int | None = None, base_block_revisions: dict | None = None) -> dict:
         with self.db.write() as conn:
             row, _ = self._report_row(conn, p, rid, "suggester", draft=True)
             _check_revision(row, base_revision)
+            _check_blocks(loads(row["draft"]), base_block_revisions)
             return self._suggest(conn, p, row, ops, message)
 
     def _suggest(self, conn: sqlite3.Connection, p: Principal, row: sqlite3.Row, ops: list, message: str) -> dict:

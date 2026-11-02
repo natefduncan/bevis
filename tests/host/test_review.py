@@ -295,3 +295,20 @@ def test_an_editor_who_cannot_clear_is_not_shown_the_item(host, agent, nate, pub
     nate.post(f"/api/reports/{published}/edits", {"ops": [text("b2", B2.replace("broad", "wide"))]})
     assert nate.get("/api/me/reports")[0]["needs_review"] == 1
     assert [i for i in nate.get("/api/me/inbox") if i["kind"] == "review"] == []
+
+
+# -- suggestions carry block revisions too ------------------------------------------------
+
+
+def test_a_suggestion_conflicts_only_on_a_block_that_changed(host, agent, nate, published):  # noqa: F811
+    claim(nate, make_link(host, agent, published, role="suggester"))
+    agent.post(f"/api/reports/{published}/edits", {"ops": [text("b4", B4 + " Later.")]})
+    ok = nate.post(f"/api/reports/{published}/suggestions",
+                   {"ops": [text("b2", B2 + " More.")], "message": "m", "base_block_revisions": {"b2": 1}}, expect=201)
+    assert ok["status"] == "open"
+    r = nate.post(f"/api/reports/{published}/suggestions",
+                  {"ops": [text("b4", B4 + " Mine.")], "base_block_revisions": {"b4": 1}}, expect=409)
+    assert r["error"]["code"] == "block_conflict" and r["error"]["details"]["blocks"][0]["revision"] == 2
+    assert [s["id"] for s in agent.get(f"/api/reports/{published}/suggestions")] == [ok["id"]]  # no second one stored
+    nate.post(f"/api/reports/{published}/suggestions",
+              {"ops": [text("b2", B2)], "base_block_revisions": {"b2": "1"}}, expect=422)

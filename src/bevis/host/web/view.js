@@ -29,6 +29,7 @@ const state = {
   role: null,
   challenges: [], // as seen from the shown version
   compose: null, // {target, cells: Map(selKey -> cell)} while writing a challenge
+  suggestions: [], // open suggestions on the draft (suggesters and up)
   editing: new Map(), // block id -> editor state, for blocks open for editing (SPEC §6.2)
   flash: null, // {block, text}: a note shown once, after a save
 };
@@ -86,6 +87,7 @@ function readHash() {
     ch: params.get("ch"),
     report: params.get("report"),
     tab: params.get("tab"),
+    s: params.get("s"),
   };
 }
 
@@ -97,6 +99,7 @@ function writeHash() {
   const o = state.open;
   if (o?.kind === "claim") params.set("c", o.id);
   if (o?.kind === "challenge") params.set("ch", o.id);
+  if (o?.kind === "suggestion") params.set("s", o.id);
   if (o?.kind === "evidence") {
     params.set("e", `${o.id}@${o.version}`);
     if (o.row !== null && o.row !== undefined) params.set("row", JSON.stringify(o.row));
@@ -229,6 +232,7 @@ async function load() {
   await loadReport();
   if (hash.c && claimById(hash.c)) openClaim(hash.c, { scroll: true });
   else if (hash.ch) openChallenge(hash.ch);
+  else if (hash.s) openSuggestion(hash.s);
   else if (hash.e) {
     const [id, ver] = hash.e.split("@");
     let row = null;
@@ -258,8 +262,19 @@ async function loadReport() {
   }
   state.evidence.clear();
   await loadChallenges();
+  await loadSuggestions();
   renderHeader();
   await renderReport();
+}
+
+async function loadSuggestions() {
+  state.suggestions = [];
+  if (state.report.kind !== "draft" || !atLeast("suggester")) return;
+  try {
+    state.suggestions = await api(`/api/reports/${state.report.id}/suggestions`);
+  } catch {
+    state.suggestions = [];
+  }
 }
 
 async function loadChallenges() {
@@ -313,6 +328,9 @@ function renderHeader() {
   const live = liveChallenges().length;
   $("challenges").hidden = !canDiscuss();
   $("challenges").textContent = live ? `Challenges (${live} unresolved)` : "Challenges";
+  const suggestable = r.kind === "draft" && atLeast("suggester");
+  $("suggestions").hidden = !suggestable;
+  $("suggestions").textContent = state.suggestions.length ? `Suggestions (${state.suggestions.length})` : "Suggestions";
   $("share").hidden = !atLeast("admin");
   $("pdf").hidden = r.kind !== "version"; // only a published version exports
 }
@@ -350,8 +368,8 @@ async function renderReport() {
     root.append(el);
     if (canEditBlock(block) && !state.editing.has(block.id)) {
       root.append(h("div", { class: "edit-row" },
-        h("button", { class: "quiet edit-block", type: "button", text: "Edit",
-          "aria-label": `Edit ${block.type === "heading" ? "heading" : "paragraph"} ${block.id}`,
+        h("button", { class: "quiet edit-block", type: "button", text: suggesting() ? "Suggest edit" : "Edit",
+          "aria-label": `${suggesting() ? "Suggest an edit to" : "Edit"} ${block.type === "heading" ? "heading" : "paragraph"} ${block.id}`,
           onclick: () => openEditor(block) })));
     }
     if (state.flash?.block === block.id) {
@@ -884,7 +902,8 @@ async function openChallenge(id) {
       h("p", { class: "meta", text: [`${e.author.name}${e.author.kind === "agent" ? " (agent)" : ""}`, when(e.created_at),
         e.kind === "status" ? `marked ${e.to_status}` : null].filter(Boolean).join(" · ") }),
       e.body ? h("p", { text: e.body }) : null,
-      e.suggestion_id ? h("p", { class: "meta", text: `Proposed an edit (suggestion ${e.suggestion_id}) for an editor to review.` }) : null)),
+      e.suggestion_id ? h("p", { class: "meta" }, `Proposed an edit (suggestion ${e.suggestion_id}) for an editor to review. `,
+        atLeast("suggester") ? h("button", { class: "quiet", type: "button", text: "Review it", onclick: () => openSuggestion(e.suggestion_id) }) : null) : null)),
     status,
     reply,
     h("div", { class: "actions" },
@@ -919,6 +938,110 @@ function openChallengeList(target = null) {
       return group.length ? [h("h3", { text: `${label} (${group.length})` }), h("ul", { class: "challenge-list" }, group.map((c) =>
         h("li", {}, h("p", { class: "meta", text: targetLabel(c.target) }), challengeItem(c).firstChild)))] : null;
     }) : h("p", { class: "meta", text: "No challenges yet. Open a claim to challenge it." }));
+}
+
+// -- suggestions (SPEC §6) ------------------------------------------------------------------
+
+const SUGGESTION_CLASS = { open: "unverified", accepted: "ok", rejected: "error" };
+
+function changedBlocks(s) {
+  // The blocks an upsert in the suggestion names, for the list; the detail shows the real diff.
+  return [...new Set(s.ops.filter((op) => op.op === "upsert_block" && op.block?.id).map((op) => op.block.id))];
+}
+
+async function openSuggestionList() {
+  state.compose = null;
+  state.open = null;
+  writeHash();
+  showPanel("Suggestions");
+  let all;
+  try {
+    all = await api(`/api/reports/${state.report.id}/suggestions?status=all`);
+  } catch (err) {
+    fill($("panel-body"), h("p", { class: "message", text: err.message }));
+    return;
+  }
+  const groups = [["Open", "open"], ["Accepted", "accepted"], ["Rejected", "rejected"]];
+  fill($("panel-body"),
+    atLeast("editor") ? null : h("p", { class: "meta", text: "An editor accepts or rejects a suggestion. You can see where yours stands." }),
+    all.length ? groups.map(([label, status]) => {
+      const group = all.filter((s) => s.status === status).reverse();
+      return group.length ? [h("h3", { text: `${label} (${group.length})` }), h("ul", { class: "challenge-list" }, group.map((s) =>
+        h("li", {}, h("button", { type: "button", class: "challenge-link", onclick: () => openSuggestion(s.id),
+          text: s.message || `Edit to ${changedBlocks(s).join(", ") || "the report"}` }),
+        h("p", { class: "meta", text: [s.author.name, when(s.created_at), changedBlocks(s).length ? `blocks ${changedBlocks(s).join(", ")}` : null].filter(Boolean).join(" · ") }))))] : null;
+    }) : h("p", { class: "meta", text: "No suggestions yet. Use Suggest edit under a paragraph to make one." }));
+}
+
+function blockChange(c) {
+  const side = c.after || c.before;
+  const verb = !c.before ? "Added" : !c.after ? "Removed" : "Changed";
+  const noun = side.type === "heading" ? "heading" : side.type === "chart" ? "chart" : "paragraph";
+  return h("article", { class: "message-card" },
+    h("p", { class: "meta", text: `${verb} ${noun} ${c.id}` }),
+    side.type === "chart"
+      ? h("p", { class: "meta", text: "The chart or its caption changed." })
+      : diffView(c.before?.text ?? "", c.after?.text ?? ""));
+}
+
+async function openSuggestion(id) {
+  state.compose = null;
+  state.open = { kind: "suggestion", id };
+  writeHash();
+  showPanel("Suggestion");
+  const rid = state.report.id;
+  let s;
+  try {
+    s = await api(`/api/reports/${rid}/suggestions/${encodeURIComponent(id)}`);
+  } catch (err) {
+    fill($("panel-body"), h("p", { class: "message", text: err.message }));
+    return;
+  }
+  const preview = s.preview;
+  const diff = preview?.diff || {};
+  const blocks = diff.blocks || [];
+  const status = h("p", { class: "message", role: "alert" });
+  const note = h("input", { type: "text", name: "note", maxlength: "300", placeholder: "A note (optional)" });
+  const resolve = async (accept) => {
+    status.textContent = "";
+    try {
+      const out = await api(`/api/reports/${rid}/suggestions/${encodeURIComponent(id)}/${accept ? "accept" : "reject"}`,
+        { method: "POST", body: { note: note.value.trim() } });
+      const touched = Object.entries(out.blocks || {});
+      if (accept && touched.length) {
+        state.flash = { block: touched[0][0], text: touched.some(([, v]) => v.needs_review)
+          ? "Accepted. The edit is near a claim, so an admin has to review it before the report can be published."
+          : "Accepted." };
+      }
+      const y = window.scrollY;
+      await loadReport();
+      window.scrollTo(0, y);
+      openSuggestionList();
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  };
+  const errors = preview?.validation?.counts?.errors ?? 0;
+  const nearClaim = blocks.some((c) => state.report.claims.some((k) => k.block_id === c.id));
+  fill($("panel-body"),
+    h("p", {}, h("span", { class: `chip ${SUGGESTION_CLASS[s.status] || ""}`, text: s.status }),
+      preview?.validation ? h("span", { class: `chip ${errors ? "error" : "ok"}`, text: errors ? plural(errors, "error") : "no errors" }) : null),
+    h("p", { class: "meta", text: `${s.author.name}${s.author.kind === "agent" ? " (agent)" : ""} · ${when(s.created_at)}` }),
+    s.message ? h("p", { text: s.message }) : null,
+    preview?.error ? h("p", { class: "message", text: `This no longer applies to the draft: ${preview.error.message}` }) : null,
+    diff.title ? h("article", { class: "message-card" }, h("p", { class: "meta", text: "Title" }),
+      diffView(diff.title.before ?? "", diff.title.after ?? "")) : null,
+    blocks.map(blockChange),
+    (diff.claims || []).length ? h("article", { class: "message-card" }, h("p", { class: "meta", text: "Claims" }),
+      h("ul", {}, diff.claims.map((c) => h("li", {}, `${c.id}: ${!c.before ? "added" : !c.after ? "removed" : "changed"}`)))) : null,
+    s.status === "open" && atLeast("editor") ? [
+      nearClaim ? h("p", { class: "meta", text: "This edit is near a claim: once accepted, an admin has to review it before the report can be published." }) : null,
+      h("label", { class: "field" }, "Note", note),
+      status,
+      h("div", { class: "actions" },
+        h("button", { class: "toggle primary", type: "button", text: "Accept", onclick: () => resolve(true) }),
+        h("button", { class: "toggle", type: "button", text: "Reject", onclick: () => resolve(false) }))] : null,
+    s.status !== "open" ? h("p", { class: "meta", text: `${s.status === "accepted" ? "Accepted" : "Rejected"} by ${s.resolved_by?.name || "someone"} · ${when(s.resolved_at)}${s.note ? ` · ${s.note}` : ""}` }) : null);
 }
 
 // -- a person's reports and inbox (SPEC §7.2) -------------------------------------------
@@ -976,7 +1099,7 @@ function inboxList(items, reports) {
   if (!items.length) return h("p", { class: "meta", text: "Nothing needs you right now." });
   const titles = new Map(reports.map((r) => [r.id, r.title]));
   return h("ul", { class: "inbox" }, items.map((i) => h("li", {},
-    h("a", { href: reportHref(i.report_id, i.open?.challenge ? { ch: i.open.challenge } : {}) },
+    h("a", { href: reportHref(i.report_id, i.open?.challenge ? { ch: i.open.challenge } : i.open?.suggestion ? { s: i.open.suggestion } : {}) },
       h("span", { class: `chip ${i.kind === "review" ? "error" : ""}`, text: INBOX_LABEL[i.kind] || i.kind }),
       " ", h("strong", { text: titles.get(i.report_id) || i.report_id })),
     h("p", { class: "inbox-summary", text: summaryText(i, titles) }),
@@ -1041,7 +1164,9 @@ function drawIndex(root, reports, inbox) {
 
 // -- editing prose (SPEC §6.2) ------------------------------------------------------------
 
-const canEditBlock = (block) => state.report?.kind === "draft" && atLeast("editor")
+// Editors and admins change the draft; suggesters use the same editor to propose a change.
+const suggesting = () => !atLeast("editor");
+const canEditBlock = (block) => state.report?.kind === "draft" && atLeast("suggester")
   && (block.type === "text" || block.type === "heading");
 
 const blockRevision = (id) => state.report.block_state?.[id]?.revision ?? 0;
@@ -1063,7 +1188,7 @@ function upsertOp(block, text) {
 
 function openEditor(block) {
   const ed = { text: block.text, base: blockRevision(block.id), original: block.text, findings: null,
-    conflict: null, error: null, saving: false, seq: 0, restored: false, leftover: [],
+    conflict: null, error: null, saving: false, seq: 0, restored: false, leftover: [], message: "",
     claimIds: new Set(state.report.claims.filter((c) => c.block_id === block.id).map((c) => c.id)) };
   try {
     const saved = JSON.parse(remembered(stashKey(block.id)) || "null");
@@ -1191,14 +1316,18 @@ async function saveBlock(block, ed) {
   ed.saving = true;
   ed.error = null;
   paintEditor(block, ed);
+  const suggest = suggesting();
   try {
-    const out = await api(`/api/reports/${state.report.id}/edits`, { method: "POST", body: {
-      ops: [upsertOp(block, ed.text)], base_block_revisions: { [block.id]: ed.base } } });
+    const out = await api(`/api/reports/${state.report.id}/${suggest ? "suggestions" : "edits"}`, { method: "POST", body: {
+      ops: [upsertOp(block, ed.text)], base_block_revisions: { [block.id]: ed.base },
+      ...(suggest ? { message: ed.message.trim() } : {}) } });
     state.editing.delete(block.id);
     stash(block.id, null);
-    state.flash = { block: block.id, text: out.blocks?.[block.id]?.needs_review
-      ? "Saved. This edit is near a claim, so an admin has to review it before the report can be published."
-      : "Saved." };
+    state.flash = { block: block.id, text: suggest
+      ? "Suggested. An editor will review it before it changes the report."
+      : out.blocks?.[block.id]?.needs_review
+        ? "Saved. This edit is near a claim, so an admin has to review it before the report can be published."
+        : "Saved." };
     const y = window.scrollY;
     await loadReport();
     window.scrollTo(0, y);
@@ -1279,7 +1408,9 @@ function blockEditor(block) {
     }
   });
   const hasClaims = ed.claimIds.size > 0;
+  const suggest = suggesting();
   const el = h("div", { class: "block-editor" },
+    suggest ? h("p", { class: "meta", text: "You are suggesting an edit. An editor reviews it before it changes the report." }) : null,
     hasClaims ? h("p", { class: "meta", text: rich
       ? "Claims are locked: click one to see its evidence. An edit near a claim needs an admin's review before the report is published."
       : "This block has claims. Text inside [ ]{#cN} is what the validator checks, and an edit near a claim needs an admin's review before the report is published." }) : null,
@@ -1287,8 +1418,11 @@ function blockEditor(block) {
     h("div", { class: "edit-status", role: "status", "aria-live": "polite" }),
     h("div", { class: "edit-conflict" }),
     h("div", { class: "edit-leftover" }),
+    suggest ? h("label", { class: "field" }, "Why? (optional)",
+      h("input", { class: "edit-message", type: "text", maxlength: "300", value: ed.message, placeholder: "A line for the editor",
+        oninput: (e) => { ed.message = e.target.value; } })) : null,
     h("div", { class: "actions" },
-      h("button", { class: "toggle primary edit-save", type: "button", text: "Save", disabled: true, onclick: () => saveBlock(block, ed) }),
+      h("button", { class: "toggle primary edit-save", type: "button", text: suggest ? "Suggest edit" : "Save", disabled: true, onclick: () => saveBlock(block, ed) }),
       h("button", { class: "toggle", type: "button", text: "Cancel", onclick: () => {
         if (ed.text !== ed.original && !confirm("Discard your changes to this block?")) return;
         closeEditor(block);
@@ -1392,6 +1526,7 @@ function setAudit(on) {
 $("audit").addEventListener("click", () => setAudit(!state.audit));
 $("challenges").addEventListener("click", () => openChallengeList());
 $("share").addEventListener("click", openShare);
+$("suggestions").addEventListener("click", () => openSuggestionList());
 $("home").addEventListener("click", () => { location.hash = new URLSearchParams({ key: state.key }).toString(); });
 $("signout").addEventListener("click", () => {
   // The token lives only in the fragment; dropping it signs this tab out.
