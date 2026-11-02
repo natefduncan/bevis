@@ -152,11 +152,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/reports/{rid}/edits")
     def edit(rid: str, p: Principal = P, body: dict = Body(...)) -> dict:
-        return service.edit(p, rid, body.get("ops"), body.get("base_revision"))
+        return service.edit(p, rid, body.get("ops"), body.get("base_revision"), body.get("base_block_revisions"))
 
     @app.post("/api/reports/{rid}/validate")
     def validate_report(rid: str, p: Principal = P, body: dict[str, Any] | None = Body(default=None)) -> dict:
-        return service.preview(p, rid, (body or {}).get("ops"))
+        body = body or {}
+        return service.preview(p, rid, body.get("ops"), body.get("base_block_revisions"))
+
+    @app.post("/api/reports/{rid}/blocks/{bid}/clear_review")
+    def clear_review(rid: str, bid: str, p: Principal = P, body: dict = Body(...)) -> dict:
+        return service.clear_review(p, rid, bid, body.get("revision"))
 
     @app.post("/api/reports/{rid}/suggestions", status_code=201)
     def suggest(rid: str, p: Principal = P, body: dict = Body(...)) -> dict:

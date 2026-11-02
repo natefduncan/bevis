@@ -46,6 +46,30 @@ class Applied:
     changes: list[Change] = field(default_factory=list)
 
 
+CLAIM_ACTIONS = ("link_claim", "update_claim", "unlink_claim")
+
+
+def touched_blocks(changes: list[Change]) -> tuple[set[str], set[str]]:
+    """(blocks whose content or claims changed, blocks where a claim was created, changed, or unlinked).
+
+    A move changes no block's content. Statuses the validator fills in are not changes.
+    """
+    touched: set[str] = set()
+    claimed: set[str] = set()
+    for c in changes:
+        if c.action in ("add_block", "update_block", "repin_block"):
+            touched.add(c.after["id"])
+        elif c.action in CLAIM_ACTIONS or c.action == "repin_claim":
+            for side in (c.before, c.after):
+                if side:
+                    touched.add(side["block_id"])
+                    if c.action in CLAIM_ACTIONS:
+                        claimed.add(side["block_id"])
+        elif c.action in ("mark_non_data", "unmark_non_data"):
+            touched.add((c.after or c.before)["block_id"])
+    return touched, claimed
+
+
 def empty_draft(title: str) -> dict:
     return {"title": title, "blocks": [], "claims": [], "non_data": []}
 
@@ -177,6 +201,7 @@ def _delete_block(state: Applied, op: dict) -> None:
     for nd in [n for n in draft["non_data"] if n["block_id"] == block["id"]]:
         draft["non_data"].remove(nd)
         state.changes.append(Change("unmark_non_data", nd, None))
+    state.draft.get("meta", {}).pop(block["id"], None)
     state.changes.append(Change("delete_block", block, None))
 
 

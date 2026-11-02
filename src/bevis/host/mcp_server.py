@@ -129,16 +129,19 @@ def create_mcp(service: Service) -> MCPServer:
         return await call(ctx, service.edit, report_id, [{"op": "link_claim", "claim": claim}], base_revision)
 
     @mcp.tool()
-    async def edit_draft(report_id: str, ops: list[dict], ctx: Context, base_revision: StrictInt | None = None) -> dict:
+    async def edit_draft(report_id: str, ops: list[dict], ctx: Context, base_revision: StrictInt | None = None,
+                         base_block_revisions: dict[str, StrictInt] | None = None) -> dict:
         """Apply several ops atomically (editor). Ops: set_title, upsert_block, move_block, delete_block,
         link_claim, unlink_claim, repin {evidence_id, version, claims?, blocks?}, mark_non_data
-        {block_id, text, reason}, unmark_non_data."""
-        return await call(ctx, service.edit, report_id, ops, base_revision)
+        {block_id, text, reason}, unmark_non_data. base_block_revisions {block id: revision}, from
+        get_report, fails the edit only if a block you name changed."""
+        return await call(ctx, service.edit, report_id, ops, base_revision, base_block_revisions)
 
     @mcp.tool()
-    async def validate_report(report_id: str, ctx: Context, ops: list[dict] | None = None) -> dict:
+    async def validate_report(report_id: str, ctx: Context, ops: list[dict] | None = None,
+                              base_block_revisions: dict[str, StrictInt] | None = None) -> dict:
         """Validate the draft, or preview the draft with `ops` applied. Nothing is stored."""
-        return await call(ctx, service.preview, report_id, ops)
+        return await call(ctx, service.preview, report_id, ops, base_block_revisions)
 
     @mcp.tool()
     async def suggest_edit(report_id: str, ops: list[dict], ctx: Context, message: str = "",
@@ -160,6 +163,12 @@ def create_mcp(service: Service) -> MCPServer:
     async def reject_edit(report_id: str, suggestion_id: str, ctx: Context, note: str = "") -> dict:
         """Reject a suggestion (editor)."""
         return await call(ctx, service.resolve_suggestion, report_id, suggestion_id, False, note)
+
+    @mcp.tool()
+    async def clear_review(report_id: str, block_id: str, revision: StrictInt, ctx: Context) -> dict:
+        """Clear a block's needs-review flag (admin), after reading the block at `revision`. A person's edit
+        near a claim flags its block, and publish is refused until every flag is cleared."""
+        return await call(ctx, service.clear_review, report_id, block_id, revision)
 
     @mcp.tool()
     async def publish(report_id: str, ctx: Context, override_reason: str | None = None,

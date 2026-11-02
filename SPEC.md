@@ -561,16 +561,25 @@ submit rows (§9); only agents and clients do.
 - **Delete:** `delete_block` semantics for the span: the claim and its
   span are removed together.
 
-**Concurrency.** Each block has its own `revision`, incremented when its
-content or its claims change. `get_report` returns it per block.
+**Concurrency.** Each block has its own `revision`, incremented once per
+edit that changes its content, its claims, or its non-data markings. A
+move changes no block, and neither do the statuses the validator fills
+in. A block no edit has touched is at revision 0. `get_report` returns
+`block_state` beside the blocks: `{block id: {revision, needs_review}}`,
+where `needs_review` is the flag (below) or null. It sits beside the
+blocks so a block read from the draft is exactly what `upsert_block`
+takes back.
 
-- A human edit sends `base_block_revision` for each block it changes,
-  and may still send `base_revision` for the whole draft.
+- An edit sends `base_block_revisions` (`{block id: revision}`) for each
+  block it changes, and may still send `base_revision` for the whole
+  draft. `validate_report` takes it too, so the editor can see a conflict
+  before it saves.
 - If the blocks it touches are unchanged, the edit applies against the
   current draft and is re-validated, even if other blocks changed.
-- If a touched block changed, the edit fails with 409 `block_conflict`.
-  `details` carry the current block, the revision the editor started
-  from, and the changed claims.
+- If a named block changed, or is gone, the edit fails with 409
+  `block_conflict`, and nothing is applied. `details.blocks` lists each
+  one with its `base_revision`, current `revision` (null if gone), the
+  current `block` and its `claims`, and its flag.
 - The editor shows the human's text beside the current block with a
   diff, and offers keep mine, take theirs, or merge by hand. Claim chips
   are locked during a merge, so a merge only resolves prose.
@@ -578,17 +587,25 @@ content or its claims change. `get_report` returns it per block.
   locks. The view shows a notice when an agent changes a block that is
   open in the editor.
 
-**Review of edits near a claim.** A human edit is **near a claim** when
-it does any of:
+**Review of edits near a claim.** A person's edit is **near a claim**
+when it does either of:
 
-- changes text inside or in the same sentence as a claim span;
-- creates, moves, or unlinks a claim.
+- changes the text of a paragraph that holds a claim span, or adds or
+  removes such a paragraph. The unit is the paragraph as Pandoc parses it
+  (a paragraph, a list item's text, a heading, a table cell), read with
+  the parse the validator uses, so no sentence splitter is involved.
+  Whitespace Pandoc ignores is not a change;
+- creates, changes, or unlinks a claim (`link_claim`, `unlink_claim`).
+  A `repin` is not, because the validator re-checks the numbers against
+  the evidence it points at.
 
-Such an edit is saved to the draft and sets `needs_review` on each block
-it touched. The flag records `edited_by` (the author, as in §6.1),
-`edited_at`, and the block revision at the time. Edits that are not near
-a claim set no flag. An agent's direct edit does not set the flag, so
-agents are not affected by this rule.
+Such an edit is saved to the draft and sets a flag on each block it
+touched, stored beside the draft's content and never in a published
+version. The flag records `edited_by` (the author, as in §6.1),
+`edited_at`, and the block `revision` it was set at. Edits that are not
+near a claim set no flag: a block's other paragraphs are free to edit.
+An agent's direct edit does not set the flag, so agents are not affected
+by this rule.
 
 - `publish` fails with 409 `needs_review` while any block is flagged,
   and `details` lists the blocks. This works like the unresolved-pin
@@ -600,17 +617,28 @@ agents are not affected by this rule.
   clearing author is the editing author (the same `person_id` under §7.2,
   else the same author name). The report has no setting to
   forbid it.
-- A later edit to a flagged block keeps the flag. It moves
-  `edited_by`/`edited_at`, and the earlier edits stay in the activity log.
-- A flag can only be cleared against the current block revision. If the
-  block changed since, the clear fails with 409 and shows the new diff.
+- A later edit to a flagged block keeps the flag. A later person's edit
+  near a claim moves `edited_by`, `edited_at` and `revision` to that
+  edit; an agent's edit, or one away from the claims, leaves the flag as
+  it was. The earlier edits stay in the activity log.
+- A flag can only be cleared against the current block revision
+  (`POST /api/reports/{id}/blocks/{block}/clear_review`, body
+  `{revision}`; MCP `clear_review`). If the block changed since, the
+  clear fails with 409 `stale_block` and carries the current block, so
+  the reviewer reads the new text first. Clearing a block that is not
+  flagged is 409 `not_flagged`. Clearing changes no content, so the
+  report's `revision` does not move.
 - Accepting a suggestion that is near a claim also sets the flag, as the
-  accepting editor's own edit would.
+  accepting editor's own edit would, when a person accepts it. An agent
+  that accepts a suggestion on its own report sets none. The flag names
+  the accepting person, so clearing it is a self-clear if they clear it.
 
-**Activity log.** Entries (§6.1) for human edits carry `action` values
-`edit_block`, `create_claim`, `move_claim`, `unlink_claim`,
-`delete_claim`, `flag_review`, and `clear_review`. `clear_review` records
-`self_cleared` and the cleared revision.
+**Activity log.** Edits are logged as they are today (`add_block`,
+`update_block`, `link_claim`, `update_claim`, `unlink_claim`, ...). Two
+entries are new. `flag_review` records the block and its revision under
+the editing author. `clear_review` records the flag it removed as
+`before` (`edited_by`, `edited_at`), and as `after` the block, the
+cleared revision, and `self_cleared`.
 
 **Published output.** Flags, edit history, and `self_cleared` appear in
 the draft view and the activity log only. A published version and every
@@ -618,16 +646,17 @@ export render the same as one with no human edits, and the bundle
 (§10) carries none of them.
 
 **Agent interface (§9).** `edit_draft` and `validate_report` accept
-`base_block_revision`. `clear_review` is a new operation and tool, admin
-only. `get_report` returns `needs_review` and `revision` per block.
+`base_block_revisions`. `clear_review` is a new tool, admin only. An
+edit's result carries `blocks`, the new `{revision, needs_review}` of
+each block it touched. `get_report` returns `block_state`.
 
 **Open items.**
 
-- The "same sentence" test needs a sentence splitter, and it should be
-  the one the validator already uses to match spans (§4.1) so the two
-  never disagree.
 - Whether `clear_review` should also be offered to editors who did not
-  make the edit.
+  make the edit. Today it is admin only.
+- Paragraph granularity is coarser than a sentence: a long paragraph
+  with one claim flags on any edit to it. Splitting sentences would need
+  a splitter the validator does not have.
 - The index page for a person with several reports should list blocks
   that need review per report.
 

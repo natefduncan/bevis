@@ -30,6 +30,7 @@ from ..evidence import EvidenceError, Record
 from ..markdown import to_html
 from ..derived import render_html
 from ..pdf import RenderError, render_pdf
+from .. import review
 from ..validate import Subject, validate
 from . import ops as ops_mod
 from .auth import DISCLOSURES, RANK, ROLES, Principal, hash_secret, new_id, new_secret
@@ -337,7 +338,7 @@ class Service:
         The revision does not move: the draft's content is the same.
         """
         content, validation = self._validate(conn, rid, draft)
-        draft = {"title": draft["title"], **content}
+        draft = _draft_doc(draft["title"], content, _meta(draft))
         conn.execute("UPDATE reports SET draft = ?, draft_validation = ? WHERE id = ?",
                      (dumps(draft), dumps(validation), rid))
         return draft
@@ -433,7 +434,7 @@ class Service:
                         (rid,),
                     )
                 ]
-                return {
+                out = {
                     "id": rid,
                     "kind": "draft",
                     "title": row["title"],
@@ -446,6 +447,13 @@ class Service:
                     "versions": versions,
                     "next_ids": {"block": ops_mod.next_block_id(draft), "claim": ops_mod.next_claim_id(draft)},
                 }
+                # What an editor needs to save without clobbering (SPEC §6.2). Beside the blocks, not in
+                # them, so a block read here is exactly what upsert_block takes back.
+                out["block_state"] = {
+                    block["id"]: {"revision": _meta(draft).get(block["id"], {}).get("revision", 0),
+                                  "needs_review": _meta(draft).get(block["id"], {}).get("review")}
+                    for block in out["blocks"]}
+                return out
             number = self._visible_version(conn, p, rid, version)
             v = conn.execute("SELECT * FROM versions WHERE report_id = ? AND number = ?", (rid, number)).fetchone()
             return {
@@ -670,10 +678,16 @@ class Service:
     # -- edits ------------------------------------------------------------------------------
 
     def _apply(self, conn: sqlite3.Connection, row: sqlite3.Row, ops: list, author: dict,
-               log_prefix: str = "") -> dict:
-        """Apply ops to the draft, validate, and store. Shared by edits and accepted suggestions."""
+               log_prefix: str = "", flag_by: dict | None = None, base_blocks: dict | None = None) -> dict:
+        """Apply ops to the draft, validate, and store. Shared by edits and accepted suggestions.
+
+        `flag_by` is the human whose edit this is: an edit near a claim flags its blocks for review
+        under that author (SPEC §6.2). Agents pass None. `base_blocks` maps block ids to the revision
+        the editor started from.
+        """
         rid = row["id"]
         draft = loads(row["draft"])
+        _check_blocks(draft, base_blocks)
         before_validation = loads(row["draft_validation"])
         try:
             applied = ops_mod.apply(draft, ops)
@@ -682,7 +696,21 @@ class Service:
         content, validation = self._validate(conn, rid, applied.draft)
         _reject_dropped_spans(draft, before_validation, applied.draft, validation)
 
-        new_draft = {"title": applied.draft["title"], **content}
+        meta = applied.draft.setdefault("meta", {})
+        touched, claimed = ops_mod.touched_blocks(applied.changes)
+        before_blocks = {b["id"]: b for b in draft["blocks"]}
+        now_blocks = {b["id"]: b for b in applied.draft["blocks"]}
+        block_state: dict[str, dict] = {}
+        flagged: list[tuple[str, int]] = []
+        for bid in sorted(touched & now_blocks.keys()):
+            m = meta.setdefault(bid, {})
+            m["revision"] = m.get("revision", 0) + 1
+            if flag_by is not None and (bid in claimed or review.text_near_claim(
+                    before_blocks.get(bid), draft["claims"], now_blocks[bid], content["claims"])):
+                m["review"] = {"edited_by": flag_by, "edited_at": now(), "revision": m["revision"]}
+                flagged.append((bid, m["revision"]))
+            block_state[bid] = {"revision": m["revision"], "needs_review": bool(m.get("review"))}
+        new_draft = _draft_doc(applied.draft["title"], content, meta)
         revision = row["revision"] + 1
         conn.execute(
             "UPDATE reports SET title = ?, revision = ?, draft = ?, draft_validation = ? WHERE id = ?",
@@ -690,26 +718,37 @@ class Service:
         )
         for change in applied.changes:
             self._log(conn, rid, author, log_prefix + change.action, change.before, change.after)
+        for bid, rev in flagged:
+            self._log(conn, rid, flag_by, "flag_review", None, {"block_id": bid, "revision": rev})
         return {
             "revision": revision,
             "validation": validation,
             "changes": _number_changes(draft, new_draft),
+            "blocks": block_state,
         }
 
-    def edit(self, p: Principal, rid: str, ops: list, base_revision: int | None = None) -> dict:
-        """Change the draft directly (editor and up)."""
+    def edit(self, p: Principal, rid: str, ops: list, base_revision: int | None = None,
+             base_block_revisions: dict | None = None) -> dict:
+        """Change the draft directly (editor and up).
+
+        `base_block_revisions` ({block id: revision}) makes the edit fail with 409 block_conflict only
+        if a block it names changed, so an agent editing elsewhere does not get in a person's way.
+        """
         with self.db.write() as conn:
             row, role = self._report_row(conn, p, rid, "suggester", draft=True)
             if RANK[role] < RANK["editor"]:
                 raise HostError(403, "forbidden",
                                 "suggesters propose changes with suggest_edit; editors apply them")
             _check_revision(row, base_revision)
-            return self._apply(conn, row, ops, p.author())
+            return self._apply(conn, row, ops, p.author(), flag_by=p.author() if p.author_kind == "human" else None,
+                               base_blocks=base_block_revisions)
 
-    def preview(self, p: Principal, rid: str, ops: list | None = None) -> dict:
+    def preview(self, p: Principal, rid: str, ops: list | None = None,
+                base_block_revisions: dict | None = None) -> dict:
         """Validate the draft, or the draft with `ops` applied, without storing anything."""
         with self.db.read() as conn:
             row, _ = self._report_row(conn, p, rid, "suggester", draft=True)
+            _check_blocks(loads(row["draft"]), base_block_revisions)
             return self._preview(conn, row, ops)
 
     def _preview(self, conn: sqlite3.Connection, row: sqlite3.Row, ops: list | None) -> dict:
@@ -788,7 +827,8 @@ class Service:
             result: dict[str, Any] = {}
             if accept:
                 # Validated again on accept; a failing claim is allowed through (SPEC §5).
-                result = self._apply(conn, report, loads(row["ops"]), loads(row["author"]))
+                result = self._apply(conn, report, loads(row["ops"]), loads(row["author"]),
+                                     flag_by=p.author() if p.author_kind == "human" else None)
             status = "accepted" if accept else "rejected"
             conn.execute(
                 "UPDATE suggestions SET status = ?, resolved_at = ?, resolved_by = ?, note = ? WHERE id = ?",
@@ -797,6 +837,36 @@ class Service:
             action = "accept_suggestion" if accept else "reject_suggestion"
             self._log(conn, rid, p.author(), action, None, {"id": sid, "note": note})
         return {"id": sid, "status": status, **result}
+
+    def clear_review(self, p: Principal, rid: str, block_id: str, revision: int) -> dict:
+        """Clear a block's review flag (admin). `revision` is the one the reviewer looked at."""
+        with self.db.write() as conn:
+            row, role = self._report_row(conn, p, rid, "suggester", draft=True)
+            if RANK[role] < RANK["admin"]:
+                raise HostError(403, "forbidden", "clearing a review needs the admin role")
+            if not isinstance(revision, int) or isinstance(revision, bool):
+                raise HostError(422, "malformed", "revision must be an integer")
+            draft = loads(row["draft"])
+            block = next((b for b in draft["blocks"] if b["id"] == block_id), None)
+            if block is None:
+                raise _not_found(f"block {block_id}")
+            m = _meta(draft).get(block_id, {})
+            flag = m.get("review")
+            if not flag:
+                raise HostError(409, "not_flagged", f"block {block_id} has nothing to review")
+            if m.get("revision", 0) != revision:
+                raise HostError(409, "stale_block",
+                                f"block {block_id} is at revision {m.get('revision', 0)}, not {revision}; "
+                                "review the new text and clear it again",
+                                {"block": block, "revision": m.get("revision", 0), "review": flag,
+                                 "claims": [c for c in draft["claims"] if c["block_id"] == block_id]})
+            self_cleared = _same_author(flag["edited_by"], p.author())
+            del m["review"]
+            conn.execute("UPDATE reports SET draft = ? WHERE id = ?", (dumps(draft), rid))
+            self._log(conn, rid, p.author(), "clear_review",
+                      {"edited_by": flag["edited_by"], "edited_at": flag["edited_at"]},
+                      {"block_id": block_id, "revision": revision, "self_cleared": self_cleared})
+        return {"block_id": block_id, "revision": revision, "cleared": True, "self_cleared": self_cleared}
 
     # -- publishing -------------------------------------------------------------------------
 
@@ -808,6 +878,11 @@ class Service:
                 raise HostError(403, "forbidden", "publishing needs the editor role")
             _check_revision(row, base_revision)
             draft = loads(row["draft"])
+            flagged = _flagged_blocks(draft)
+            if flagged:
+                raise HostError(409, "needs_review",
+                                f"{len(flagged)} block(s) were edited near a claim and need review before publishing: "
+                                "an admin clears each with clear_review", {"blocks": flagged})
             content, validation = self._validate(conn, rid, draft)  # evidence may have moved on
             errors = validation["counts"]["errors"]
             override = None
@@ -827,7 +902,7 @@ class Service:
             )
             conn.execute(
                 "UPDATE reports SET draft = ?, draft_validation = ? WHERE id = ?",
-                (dumps({"title": row["title"], **content}), dumps(validation), rid),
+                (dumps(_draft_doc(row["title"], content, _meta(draft))), dumps(validation), rid),
             )  # the draft carries the statuses it was published with
             self._log(conn, rid, p.author(), "publish", None,
                       {"version": number, "counts": validation["counts"], "override": override})
@@ -1306,7 +1381,7 @@ class Service:
                 unpublished_changes=changes,
                 pending_suggestions=conn.execute(
                     "SELECT COUNT(*) FROM suggestions WHERE report_id = ? AND status = 'open'", (rid,)).fetchone()[0],
-                needs_review=0,  # nothing sets the flag until human editing lands (§6.2)
+                needs_review=len(_flagged_blocks(draft)),
                 unresolved_pins=sum(1 for f in findings if f["code"] in ("pin.unknown", "pin.stale")),
                 last_activity=conn.execute("SELECT MAX(timestamp) FROM activity WHERE report_id = ?",
                                            (rid,)).fetchone()[0],
@@ -1359,6 +1434,11 @@ class Service:
                         items.append({"kind": "suggestion", "report_id": rid, "id": s_["id"],
                                       "summary": s_["message"], "author": loads(s_["author"]),
                                       "at": s_["created_at"], "open": {"report": rid, "suggestion": s_["id"]}})
+                if role == "admin":
+                    for f in _flagged_blocks(loads(r["draft"])):
+                        items.append({"kind": "review", "report_id": rid, "id": f["id"],
+                                      "summary": f"block {f['id']} was edited near a claim", "author": f["edited_by"],
+                                      "at": f["edited_at"], "open": {"report": rid, "block": f["id"]}})
                 if RANK[role] >= RANK["commenter"]:
                     for c in self._live_challenges(conn, q, r):
                         if _awaits_me(c, role):
@@ -1492,6 +1572,53 @@ def _row_keys(doc: dict) -> list[list[str | None]] | None:
         [values.from_json(types[k], row[names.index(k)]).canonical() for k in doc["key"]]
         for row in doc["rows"]
     ]
+
+
+def _meta(draft: dict) -> dict:
+    """Per-block state kept beside the draft's content: {block id: {revision, review}}. It is never
+    part of a published version or an export (SPEC §6.2)."""
+    return draft.get("meta") or {}
+
+
+def _draft_doc(title: str, content: dict, meta: dict) -> dict:
+    return {"title": title, **content, **({"meta": meta} if meta else {})}
+
+
+def _flagged_blocks(draft: dict) -> list[dict]:
+    meta = _meta(draft)
+    return [{"id": b["id"], "edited_by": meta[b["id"]]["review"]["edited_by"],
+             "edited_at": meta[b["id"]]["review"]["edited_at"]}
+            for b in draft["blocks"] if meta.get(b["id"], {}).get("review")]
+
+
+def _same_author(a: dict, b: dict) -> bool:
+    """The same person: by person_id when either has one, else by kind and name."""
+    if a.get("person_id") or b.get("person_id"):
+        return a.get("person_id") == b.get("person_id")
+    return (a.get("kind"), a.get("name")) == (b.get("kind"), b.get("name"))
+
+
+def _check_blocks(draft: dict, base_blocks: dict | None) -> None:
+    """409 block_conflict if a block the editor started from has changed since (or is gone)."""
+    if base_blocks is None:
+        return
+    if not isinstance(base_blocks, dict) or not all(
+            isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) for k, v in base_blocks.items()):
+        raise HostError(422, "malformed", "base_block_revisions maps block ids to integer revisions")
+    meta = _meta(draft)
+    stale = []
+    for bid, base in base_blocks.items():
+        block = next((b for b in draft["blocks"] if b["id"] == bid), None)
+        current = meta.get(bid, {}).get("revision", 0) if block else None
+        if block is None or current != base:
+            stale.append({"id": bid, "base_revision": base, "revision": current, "block": block,
+                          "claims": [c for c in draft["claims"] if c["block_id"] == bid],
+                          "needs_review": meta.get(bid, {}).get("review")})
+    if stale:
+        raise HostError(409, "block_conflict",
+                        "block(s) " + ", ".join(x["id"] for x in stale)
+                        + " changed since you read them; compare your text with the current one",
+                        {"blocks": stale})
 
 
 def _check_revision(row: sqlite3.Row, base_revision: int | None) -> None:
