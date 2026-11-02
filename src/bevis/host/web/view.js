@@ -2207,16 +2207,13 @@ $("version").addEventListener("change", async (e) => {
   writeHash();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.target.closest?.("input, select, textarea")) return;
+  if (e.target.closest?.("input, select, textarea") || e.target.isContentEditable) return;
   if (e.key === "Escape" && !$("panel").hidden) closePanel();
   if (e.key === "a" && !e.metaKey && !e.ctrlKey && !e.altKey) setAudit(!state.audit);
 });
-window.addEventListener("hashchange", () => {
-  const hash = readHash();
-  if (hash.key !== state.key) location.reload();
-  else if (state.person && (hash.report || null) !== (state.rid || null)) location.reload();
-  else if (state.person && !state.rid && (hash.tab === "inbox" ? "inbox" : "reports") !== state.tab) location.reload();
-});
+// The view writes its own state to the hash with replaceState, which fires no event, so any hashchange
+// is a link followed or a hash edited: open what it names.
+window.addEventListener("hashchange", () => location.reload());
 
 try { state.audit = localStorage.getItem("bevis.audit") === "1"; } catch { state.audit = false; }
 $("audit").setAttribute("aria-pressed", String(state.audit));
