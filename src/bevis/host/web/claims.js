@@ -103,7 +103,9 @@ export function claimForOps(def, blockId, latest, { lenient = false } = {}) {
     return out;
   });
   return {
-    id: def.id, block_id: blockId, evidence: derivePins(numbers.map((n) => ({ ...n })), latest, def.extraEvidence || []), numbers,
+    id: def.id, block_id: blockId,
+    // A claim that only moves keeps the evidence it pinned; once its numbers are edited the pins are derived again.
+    evidence: def.fixedEvidence ?? derivePins(numbers.map((n) => ({ ...n })), latest, def.extraEvidence || []), numbers,
     ...(def.derivation ? { derivation: def.derivation } : {}),
   };
 }

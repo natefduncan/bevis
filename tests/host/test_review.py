@@ -336,3 +336,32 @@ def test_a_flagged_new_block_has_no_earlier_text(editor, published):  # noqa: F8
     editor.post(f"/api/reports/{published}/edits", {"ops": [
         text("b20", "[Revenue fell 12.0%]{#c9}."), {"op": "link_claim", "claim": claim_}]})
     assert state(editor, published)["b20"]["needs_review"]["from"] is None
+
+
+def test_a_claim_moves_to_another_block_in_one_edit(agent, report):
+    # c4 is in b4. Its span leaves b4's text, joins b2's, and the claim is re-linked to b2: one edit.
+    blocks = {b["id"]: b for b in agent.get(f"/api/reports/{report}")["blocks"]}
+    span = "[142 accounts churned, taking $1.02M of prior-year revenue with them]{#c4}"
+    assert span in blocks["b4"]["text"]
+    claim = next(c for c in agent.get(f"/api/reports/{report}")["claims"] if c["id"] == "c4")
+    claim = {**{k: v for k, v in claim.items() if k != "status"}, "block_id": "b2"}
+    before = agent.get(f"/api/reports/{report}")["revision"]
+    out = agent.post(f"/api/reports/{report}/edits", {
+        "ops": [text("b4", blocks["b4"]["text"].replace(span, span[1:span.index("]")])),
+                text("b2", blocks["b2"]["text"] + " " + span),
+                {"op": "link_claim", "claim": claim}],
+        "base_block_revisions": {"b4": 1, "b2": 1}})
+    assert out["revision"] == before + 1
+    assert out["validation"]["counts"]["errors"] == 0
+    after = agent.get(f"/api/reports/{report}")
+    assert next(c for c in after["claims"] if c["id"] == "c4")["block_id"] == "b2"
+    assert {k: v["revision"] for k, v in state(agent, report).items() if k in ("b2", "b4")} == {"b2": 2, "b4": 2}
+
+
+def test_moving_a_span_without_re_linking_its_claim_is_flagged(agent, report):
+    # The span moves to b2 but the claim still says b4: the validator reports it, so a client must re-link.
+    blocks = {b["id"]: b for b in agent.get(f"/api/reports/{report}")["blocks"]}
+    span = "[142 accounts churned, taking $1.02M of prior-year revenue with them]{#c4}"
+    out = agent.post(f"/api/reports/{report}/edits", {"ops": [
+        text("b4", blocks["b4"]["text"].replace(span, "plain")), text("b2", blocks["b2"]["text"] + " " + span)]})
+    assert [f["code"] for f in out["validation"]["findings"] if f["severity"] == "error"] == ["claim.wrong_block"]

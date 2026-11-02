@@ -3,7 +3,7 @@
 import { diffWords, merge3, splitSpans } from "./textdiff.js";
 import { $, api, atLeast, fill, h, plural, remembered, state } from "./core.js";
 import { loadReport, renderReport } from "./report.js";
-import { buildOps, captureSelection, dropChip, edited, moveChip, paintClaimTools, selectClaim, unfinishedClaim } from "./claim-tools.js";
+import { buildOps, captureSelection, drag, dropChip, edited, moveChip, paintClaimTools, selectClaim, unfinishedClaim } from "./claim-tools.js";
 import { updateComposerResults } from "./claim-composer.js";
 
 // -- editing prose (SPEC §6.2) ------------------------------------------------------------
@@ -22,7 +22,7 @@ function stashKey(id) {
 export function stash(id, ed) {
   // Unsaved text stays in the browser until a save succeeds.
   remembered(stashKey(id), ed ? JSON.stringify({ base: ed.base, text: ed.text,
-    pending: [...ed.pending], unlinked: [...ed.unlinked] }) : "");
+    pending: [...ed.pending], unlinked: [...ed.unlinked], partners: [...ed.partners] }) : "");
 }
 
 export function upsertOp(block, text) {
@@ -34,13 +34,13 @@ export function upsertOp(block, text) {
 function createEditor(block) {
   const ed = { text: block.text, base: blockRevision(block.id), original: block.text, findings: null,
     conflict: null, error: null, seq: 0, restored: false, leftover: [],
-    block, pending: new Map(), unlinked: new Set(), selected: null, sel: null, composer: null, check: null, drag: null,
+    block, pending: new Map(), unlinked: new Set(), partners: new Set(), selected: null, sel: null, composer: null, check: null,
     claimIds: new Set(state.report.claims.filter((c) => c.block_id === block.id).map((c) => c.id)) };
   try {
     const saved = JSON.parse(remembered(stashKey(block.id)) || "null");
     if (saved && typeof saved.text === "string" && (saved.text !== block.text || saved.pending?.length || saved.unlinked?.length)) {
       Object.assign(ed, { text: saved.text, base: Number.isInteger(saved.base) ? saved.base : ed.base, restored: true,
-        pending: new Map(saved.pending || []), unlinked: new Set(saved.unlinked || []) });
+        pending: new Map(saved.pending || []), unlinked: new Set(saved.unlinked || []), partners: new Set(saved.partners || []) });
       for (const id of ed.pending.keys()) ed.claimIds.add(id);
     }
   } catch { /* an unreadable stash is ignored */ }
@@ -132,6 +132,20 @@ export function schedulePreview(block, ed, delay = 400) {
 
 export const isDirty = (ed) => ed.text !== ed.original || ed.pending.size > 0 || ed.unlinked.size > 0;
 
+// A claim moved between blocks is one change across both, so a check of either block has to send both: the
+// editors joined by a move, with their text and claims as they are now.
+function moveGroup(ed) {
+  const seen = new Set([ed]);
+  const todo = [ed];
+  while (todo.length) {
+    for (const id of todo.pop().partners) {
+      const other = state.editing.get(id);
+      if (other && !seen.has(other) && isDirty(other)) { seen.add(other); todo.push(other); }
+    }
+  }
+  return [...seen];
+}
+
 export async function preview(block, ed) {
   if (!isDirty(ed) || !ed.text.trim()) {
     ed.findings = null;
@@ -140,18 +154,25 @@ export async function preview(block, ed) {
     return;
   }
   const seq = ++ed.seq;
+  const group = moveGroup(ed);
   try {
     const out = await api(`/api/reports/${state.report.id}/validate`, { method: "POST", body: {
-      ops: buildOps(block, ed, { lenient: true }), base_block_revisions: { [block.id]: ed.base } } });
+      ops: group.flatMap((e) => buildOps(e.block, e, { lenient: true })),
+      base_block_revisions: Object.fromEntries(group.map((e) => [e.block.id, e.base])) } });
     if (seq !== ed.seq) return; // a newer keystroke is already being checked
     ed.findings = blockFindings(out.validation.findings, block.id, ed.pending.keys());
     ed.check = Object.fromEntries((out.diff?.claims || []).filter((c) => c.after).map((c) => [c.id, c.after]));
     ed.error = null;
-    ed.conflict = null;
+    // A conflict stays until it is resolved; a check that started before it was found must not clear it.
   } catch (err) {
     if (seq !== ed.seq) return;
-    if (err.code === "block_conflict") ed.conflict = err.details.blocks[0];
-    else { ed.error = errorText(err); ed.findings = null; ed.check = null; }
+    if (err.code === "block_conflict") {
+      for (const c of err.details.blocks) {
+        const other = state.editing.get(c.id);
+        if (other && other !== ed) { other.conflict = other.conflict || c; paintEditor(other.block, other); }
+        else if (other) ed.conflict = c;
+      }
+    } else { ed.error = errorText(err); ed.findings = null; ed.check = null; }
   }
   paintEditor(block, ed);
   updateComposerResults(ed);
@@ -314,8 +335,8 @@ export function chipEl(span, ed) {
     "data-src": span.source, "data-claim": span.id,
     title: `Claim ${span.id}: locked. Click for what you can do with it; drag it, or press Alt+Arrow, to move it.`,
     onclick: select,
-    ondragstart: (e) => { ed.drag = e.currentTarget; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); },
-    ondragend: () => { ed.drag = null; },
+    ondragstart: (e) => { drag.chip = e.currentTarget; drag.ed = ed; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); },
+    ondragend: () => { drag.chip = null; drag.ed = null; },
     onkeydown: (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
       else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
@@ -367,8 +388,8 @@ export function blockEditor(block) {
   if (rich) {
     field.addEventListener("mouseup", () => captureSelection(block, ed, field));
     field.addEventListener("keyup", () => captureSelection(block, ed, field));
-    field.addEventListener("dragover", (e) => { if (ed.drag) e.preventDefault(); });
-    field.addEventListener("drop", (e) => { if (ed.drag) { e.preventDefault(); dropChip(block, ed, field, e); } });
+    field.addEventListener("dragover", (e) => { if (drag.chip) e.preventDefault(); });
+    field.addEventListener("drop", (e) => { if (drag.chip) { e.preventDefault(); dropChip(block, ed, field, e); } });
   }
   field.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

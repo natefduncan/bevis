@@ -197,3 +197,86 @@ def test_the_textarea_fallback_edits_markdown_and_keeps_claims(browser, seed):
         expect(page.locator("#blk-b2 .claim-chip")).to_have_count(0)
     finally:
         ctx.close()
+
+
+def get_report(seed):
+    return seed.call("agent", "GET", f"/api/reports/{seed.rid}")
+
+
+def start_whole_report_edit(page, seed, who="eli"):
+    page.goto(seed.view(who, v="draft"))
+    expect(page.locator("#meta")).to_contain_text("Draft, revision")
+    page.locator("#edit-all").click()
+    expect(page.locator("#blk-b4 .claim-chip[data-claim='c4']")).to_be_visible()
+
+
+def test_a_claim_moves_to_another_block_with_the_picker(page, seed):
+    before = next(c for c in get_report(seed)["claims"] if c["id"] == "c4")
+    start_whole_report_edit(page, seed)
+    page.locator("#blk-b4 .claim-chip[data-claim='c4']").click()
+    page.get_by_label("Move claim to block").select_option("b2")
+    expect(page.locator("#blk-b2 .claim-chip[data-claim='c4']")).to_be_visible()
+    expect(page.locator("#blk-b4 .claim-chip[data-claim='c4']")).to_have_count(0)
+    expect(page.locator("#blk-b4 .claim-chip")).to_have_count(2)  # c2 and c3 stay
+    expect(page.locator("#edit-summary")).to_have_text("2 blocks changed")
+    # Both blocks are checked together, so neither reports the span as dropped or in the wrong block.
+    expect(page.locator("#blk-b2 .edit-status")).to_contain_text("no problems")
+    expect(page.locator("#blk-b4 .edit-status")).not_to_contain_text("error")
+    expect(page.locator("#edit-save")).to_be_enabled()
+
+    page.locator("#edit-save").click()
+    expect(page.locator("#edit-summary")).to_contain_text("Saved 2 blocks")
+    after = get_report(seed)
+    moved = next(c for c in after["claims"] if c["id"] == "c4")
+    assert moved["block_id"] == "b2"
+    assert moved["evidence"] == before["evidence"] and moved["numbers"][0]["cell"] == before["numbers"][0]["cell"]
+    assert moved["numbers"][0]["status"] == "ok"
+    texts = {b["id"]: b.get("text", "") for b in after["blocks"]}
+    assert "{#c4}" in texts["b2"] and "{#c4}" not in texts["b4"]
+    assert texts["b2"].endswith("with them]{#c4}")  # at the end of the block it moved to
+
+
+def test_a_claim_is_dragged_into_another_block(page, seed):
+    start_whole_report_edit(page, seed)
+    chip = page.locator("#blk-b4 .claim-chip[data-claim='c4']")
+    target = page.locator("#blk-b2 .edit-field")
+    box = target.bounding_box()
+    chip.drag_to(target, target_position={"x": 30, "y": min(box["height"] - 6, 40)})
+    expect(page.locator("#blk-b2 .claim-chip[data-claim='c4']")).to_be_visible()
+    expect(page.locator("#blk-b4 .claim-chip[data-claim='c4']")).to_have_count(0)
+    expect(page.locator("#blk-b2 .edit-status")).to_contain_text("no problems")
+    page.locator("#edit-save").click()
+    expect(page.locator("#edit-summary")).to_contain_text("Saved 2 blocks")
+    assert next(c for c in get_report(seed)["claims"] if c["id"] == "c4")["block_id"] == "b2"
+
+
+def test_a_moved_claim_survives_a_reload_and_still_checks_as_a_pair(page, seed):
+    start_whole_report_edit(page, seed)
+    page.locator("#blk-b4 .claim-chip[data-claim='c4']").click()
+    page.get_by_label("Move claim to block").select_option("b2")
+    expect(page.locator("#edit-summary")).to_have_text("2 blocks changed")
+    page.reload()
+    page.locator("#edit-all").click()
+    expect(page.locator("#blk-b2 .claim-chip[data-claim='c4']")).to_be_visible()  # the unsaved move is restored
+    expect(page.locator("#edit-summary")).to_have_text("2 blocks changed")
+    expect(page.locator("#blk-b2 .edit-status")).to_contain_text("no problems")
+    expect(page.locator("#blk-b4 .edit-status")).not_to_contain_text("error")
+    page.locator("#edit-save").click()
+    expect(page.locator("#edit-summary")).to_contain_text("Saved 2 blocks")
+    assert next(c for c in get_report(seed)["claims"] if c["id"] == "c4")["block_id"] == "b2"
+
+
+def test_a_moved_claim_can_still_be_edited_and_unlinked_in_its_new_block(page, seed):
+    start_whole_report_edit(page, seed)
+    page.locator("#blk-b4 .claim-chip[data-claim='c4']").click()
+    page.get_by_label("Move claim to block").select_option("b2")
+    chip = page.locator("#blk-b2 .claim-chip[data-claim='c4']")
+    chip.click()  # the chip answers to the block it is in now
+    expect(page.locator("#blk-b2 .claim-tools")).to_contain_text("Claim c4:")
+    expect(page.locator("#blk-b4 .claim-tools")).not_to_contain_text("Claim c4")
+    page.get_by_role("button", name="Unlink, keep the text").click()
+    page.locator("#edit-save").click()
+    expect(page.locator("#edit-summary")).to_contain_text("Saved 2 blocks")
+    assert not any(c["id"] == "c4" for c in get_report(seed)["claims"])
+    b2 = next(b for b in get_report(seed)["blocks"] if b["id"] == "b2")
+    assert "142 accounts churned" in b2["text"] and "{#c4}" not in b2["text"]

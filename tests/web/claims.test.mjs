@@ -123,3 +123,11 @@ test("a claim can cite evidence with no number, and a number's own pin wins for 
   const out = claimForOps({ id: "c9", numbers: [], extraEvidence: [{ id: "q-a-aaa", version: 1 }] }, "b2", {});
   assert.deepEqual(out.evidence, [{ id: "q-a-aaa", version: 1 }]);
 });
+
+test("a claim that only moves keeps the evidence it pinned; edited numbers pin again", () => {
+  const def = { id: "c4", numbers: [{ text: "142", tier: "direct", cell: { evidence: "q-churn", version: 1, key: [], column: "churned_accounts" } }],
+    extraEvidence: [], fixedEvidence: [{ id: "q-churn", version: 1 }, { id: "q-old", version: 3 }] };
+  assert.deepEqual(claimForOps(def, "b2", { "q-churn": 2 }).evidence, [{ id: "q-churn", version: 1 }, { id: "q-old", version: 3 }]);
+  delete def.fixedEvidence;
+  assert.deepEqual(claimForOps(def, "b2", { "q-churn": 2 }).evidence, [{ id: "q-churn", version: 1 }]);
+});

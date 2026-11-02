@@ -33,8 +33,8 @@ export function startClaim(block, ed) {
   openComposer(block, ed, id, { isNew: true });
 }
 
-const editableClaim = (claim) => ({
-  id: claim.id, derivation: claim.derivation, extraEvidence: [],
+export const editableClaim = (claim) => ({
+  id: claim.id, derivation: claim.derivation, extraEvidence: [], fixedEvidence: claim.evidence.map((p) => ({ ...p })),
   numbers: claim.numbers.map((n) => ({ text: n.text, tier: n.tier, cell: n.cell && { ...n.cell, key: [...n.cell.key] },
     expression: n.expression, derivation: n.derivation })),
 });
@@ -89,7 +89,7 @@ export function drawComposer(block, ed) {
     const pins = derivePins(def.numbers, latestVersions(), def.extraEvidence);
     pinsLine.textContent = pins.length ? `Pins: ${pins.map((p) => `${p.id} v${p.version}`).join(", ")}` : "Pins: no evidence yet";
   };
-  const changed = () => { ed.restored = false; paintPins(); stash(block.id, ed); paintEditor(block, ed); schedulePreview(block, ed); };
+  const changed = () => { delete def.fixedEvidence; ed.restored = false; paintPins(); stash(block.id, ed); paintEditor(block, ed); schedulePreview(block, ed); };
   const redraw = () => { drawComposer(block, ed); changed(); };
 
   const rows = def.numbers.map((n, i) => {
