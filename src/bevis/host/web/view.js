@@ -6,7 +6,8 @@
 // is inserted with textContent; the only HTML inserted is the server's
 // sanitized rendering of text blocks.
 
-import { diffWords, merge3, splitSpans } from "./textdiff.js";
+import { cellExpression, claimForOps, derivePins, detectNumbers, isComplete, moveOverWord, nextClaimId } from "./claims.js";
+import { diffWords, findSpans, merge3, splitSpans } from "./textdiff.js";
 
 const PAGE_SIZE = 50;
 const FULL_TABLE_ROWS = 25;
@@ -1272,7 +1273,8 @@ function stashKey(id) {
 
 function stash(id, ed) {
   // Unsaved text stays in the browser until a save succeeds.
-  remembered(stashKey(id), ed ? JSON.stringify({ base: ed.base, text: ed.text }) : "");
+  remembered(stashKey(id), ed ? JSON.stringify({ base: ed.base, text: ed.text,
+    pending: [...ed.pending], unlinked: [...ed.unlinked] }) : "");
 }
 
 function upsertOp(block, text) {
@@ -1284,11 +1286,14 @@ function upsertOp(block, text) {
 function openEditor(block) {
   const ed = { text: block.text, base: blockRevision(block.id), original: block.text, findings: null,
     conflict: null, error: null, saving: false, seq: 0, restored: false, leftover: [], message: "",
+    block, pending: new Map(), unlinked: new Set(), selected: null, sel: null, composer: null, check: null, drag: null,
     claimIds: new Set(state.report.claims.filter((c) => c.block_id === block.id).map((c) => c.id)) };
   try {
     const saved = JSON.parse(remembered(stashKey(block.id)) || "null");
-    if (saved && typeof saved.text === "string" && saved.text !== block.text) {
-      Object.assign(ed, { text: saved.text, base: Number.isInteger(saved.base) ? saved.base : ed.base, restored: true });
+    if (saved && typeof saved.text === "string" && (saved.text !== block.text || saved.pending?.length || saved.unlinked?.length)) {
+      Object.assign(ed, { text: saved.text, base: Number.isInteger(saved.base) ? saved.base : ed.base, restored: true,
+        pending: new Map(saved.pending || []), unlinked: new Set(saved.unlinked || []) });
+      for (const id of ed.pending.keys()) ed.claimIds.add(id);
     }
   } catch { /* an unreadable stash is ignored */ }
   state.editing.set(block.id, ed);
@@ -1304,8 +1309,8 @@ function closeEditor(block) {
   renderReport();
 }
 
-function blockFindings(findings, id) {
-  const claims = new Set(state.report.claims.filter((c) => c.block_id === id).map((c) => c.id));
+function blockFindings(findings, id, extra = []) {
+  const claims = new Set([...state.report.claims.filter((c) => c.block_id === id).map((c) => c.id), ...extra]);
   return findings.filter((f) => f.block === id || (f.claim && claims.has(f.claim)));
 }
 
@@ -1314,38 +1319,50 @@ function schedulePreview(block, ed, delay = 400) {
   ed.timer = setTimeout(() => preview(block, ed), delay);
 }
 
+const isDirty = (ed) => ed.text !== ed.original || ed.pending.size > 0 || ed.unlinked.size > 0;
+
 async function preview(block, ed) {
-  if (ed.text === ed.original || !ed.text.trim()) {
+  if (!isDirty(ed) || !ed.text.trim()) {
     ed.findings = null;
+    ed.check = null;
     paintEditor(block, ed);
     return;
   }
   const seq = ++ed.seq;
   try {
     const out = await api(`/api/reports/${state.report.id}/validate`, { method: "POST", body: {
-      ops: [upsertOp(block, ed.text)], base_block_revisions: { [block.id]: ed.base } } });
+      ops: buildOps(block, ed, { lenient: true }), base_block_revisions: { [block.id]: ed.base } } });
     if (seq !== ed.seq) return; // a newer keystroke is already being checked
-    ed.findings = blockFindings(out.validation.findings, block.id);
+    ed.findings = blockFindings(out.validation.findings, block.id, ed.pending.keys());
+    ed.check = Object.fromEntries((out.diff?.claims || []).filter((c) => c.after).map((c) => [c.id, c.after]));
     ed.error = null;
     ed.conflict = null;
   } catch (err) {
     if (seq !== ed.seq) return;
     if (err.code === "block_conflict") ed.conflict = err.details.blocks[0];
-    else { ed.error = err.message; ed.findings = null; }
+    else { ed.error = errorText(err); ed.findings = null; ed.check = null; }
   }
   paintEditor(block, ed);
+  updateComposerResults(ed);
+}
+
+function errorText(err) {
+  const first = Array.isArray(err.details) ? err.details[0] : null;
+  return first?.message ? `${err.message}: ${first.message}` : err.message;
 }
 
 function paintEditor(block, ed) {
   const root = $("report").querySelector(`#blk-${CSS.escape(block.id)}`);
   if (!root) return;
-  const changed = ed.text !== ed.original && ed.text.trim() !== "";
-  root.querySelector(".edit-save").disabled = ed.saving || !changed;
+  const changed = isDirty(ed) && ed.text.trim() !== "";
+  const unfinished = unfinishedClaim(block, ed);
+  root.querySelector(".edit-save").disabled = ed.saving || !changed || Boolean(unfinished);
   const errors = ed.findings?.filter((f) => f.severity === "error").length ?? 0;
   const warnings = ed.findings?.filter((f) => f.severity === "warning").length ?? 0;
   fill(root.querySelector(".edit-status"),
     ed.restored && ed.text !== ed.original ? h("p", { class: "meta", text: "Restored your unsaved text." }) : null,
     ed.error ? h("p", { class: "message", text: ed.error }) : null,
+    unfinished ? h("p", { class: "meta", text: unfinished }) : null,
     ed.findings === null ? null : h("p", { class: "meta" },
       errors ? h("span", { class: "chip error", text: plural(errors, "error") }) : null,
       warnings ? h("span", { class: "chip warning", text: plural(warnings, "warning") }) : null,
@@ -1353,6 +1370,7 @@ function paintEditor(block, ed) {
     ed.findings?.filter((f) => f.severity !== "info").slice(0, 6).map((f) =>
       h("p", { class: "finding" }, h("span", { class: `chip ${f.severity}`, text: f.severity }), " ",
         f.claim ? h("code", { text: f.claim }) : null, f.claim ? " " : null, f.message)));
+  paintClaimTools(block, ed);
   fill(root.querySelector(".edit-conflict"), ed.conflict ? conflictNotice(block, ed) : null);
   fill(root.querySelector(".edit-leftover"), ed.leftover.length ? h("div", { class: "notice" },
     h("p", { class: "meta", text: "Your version of what you both changed (copy from it, then dismiss):" }),
@@ -1372,9 +1390,9 @@ function applyText(block, ed, text, base, claims) {
   ed.base = base;
   ed.conflict = null;
   ed.findings = null;
-  ed.claimIds = new Set(claims.map((c) => c.id));
-  stash(block.id, ed.text === ed.original ? null : ed);
-  setFieldText($("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`), text, ed.claimIds);
+  ed.claimIds = new Set([...claims.map((c) => c.id), ...ed.pending.keys()]);
+  stash(block.id, isDirty(ed) ? ed : null);
+  setFieldText($("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-field`), text, ed.claimIds, ed);
   paintEditor(block, ed);
   schedulePreview(block, ed, 0);
 }
@@ -1414,7 +1432,7 @@ async function saveBlock(block, ed) {
   const suggest = suggesting();
   try {
     const out = await api(`/api/reports/${state.report.id}/${suggest ? "suggestions" : "edits"}`, { method: "POST", body: {
-      ops: [upsertOp(block, ed.text)], base_block_revisions: { [block.id]: ed.base },
+      ops: buildOps(block, ed), base_block_revisions: { [block.id]: ed.base },
       ...(suggest ? { message: ed.message.trim() } : {}) } });
     state.editing.delete(block.id);
     stash(block.id, null);
@@ -1443,20 +1461,31 @@ const richSupported = (() => {
   return d.contentEditable === "plaintext-only";
 })();
 
-function chipEl(span) {
-  return h("span", { class: "claim-chip", contenteditable: "false", role: "button", tabindex: "0",
+function chipEl(span, ed) {
+  const pending = ed.pending.has(span.id);
+  const select = () => selectClaim(ed.block, ed, span.id);
+  return h("span", { class: `claim-chip${pending ? " pending" : ""}${ed.selected === span.id ? " selected" : ""}`,
+    contenteditable: "false", role: "button", tabindex: "0", draggable: "true",
     "data-src": span.source, "data-claim": span.id,
-    title: `Claim ${span.id}: locked. Click to see its evidence.`,
-    onclick: () => openClaim(span.id),
-    onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openClaim(span.id); } } },
+    title: `Claim ${span.id}: locked. Click for what you can do with it; drag it, or press Alt+Arrow, to move it.`,
+    onclick: select,
+    ondragstart: (e) => { ed.drag = e.currentTarget; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); },
+    ondragend: () => { ed.drag = null; },
+    onkeydown: (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
+      else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        moveChip(ed.block, ed, e.currentTarget, e.key === "ArrowLeft" ? -1 : 1);
+      }
+    } },
   span.inner, h("sup", { text: span.id }));
 }
 
 const isRich = (field) => field.classList.contains("rich-field");
 
-function setFieldText(field, text, ids) {
+function setFieldText(field, text, ids, ed) {
   if (!isRich(field)) { field.value = text; return; }
-  field.replaceChildren(...splitSpans(text, ids).map((p) => (p.span ? chipEl(p.span) : document.createTextNode(p.text))));
+  field.replaceChildren(...splitSpans(text, ids).map((p) => (p.span ? chipEl(p.span, ed) : document.createTextNode(p.text))));
 }
 
 function fieldText(field) {
@@ -1488,28 +1517,30 @@ function blockEditor(block) {
         "aria-multiline": "true", "aria-label": label, spellcheck: "true" })
       : h("textarea", { class: "edit-field", rows: String(Math.max(4, Math.min(24, ed.text.split("\n").length + 2))),
         spellcheck: "true", "aria-label": label });
-  setFieldText(field, ed.text, ed.claimIds);
-  field.addEventListener("input", () => {
-    ed.text = fieldText(field);
-    ed.restored = false;
-    stash(block.id, ed);
-    paintEditor(block, ed);
-    schedulePreview(block, ed);
-  });
+  setFieldText(field, ed.text, ed.claimIds, ed);
+  field.addEventListener("input", () => edited(block, ed, field));
+  if (rich) {
+    field.addEventListener("mouseup", () => captureSelection(block, ed, field));
+    field.addEventListener("keyup", () => captureSelection(block, ed, field));
+    field.addEventListener("dragover", (e) => { if (ed.drag) e.preventDefault(); });
+    field.addEventListener("drop", (e) => { if (ed.drag) { e.preventDefault(); dropChip(block, ed, field, e); } });
+  }
   field.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (!$("report").querySelector(`#blk-${CSS.escape(block.id)} .edit-save`).disabled) saveBlock(block, ed);
     }
   });
-  const hasClaims = ed.claimIds.size > 0;
+  const hasClaims = ed.claimIds.size > 0 || rich;
   const suggest = suggesting();
   const el = h("div", { class: "block-editor" },
     suggest ? h("p", { class: "meta", text: "You are suggesting an edit. An editor reviews it before it changes the report." }) : null,
     hasClaims ? h("p", { class: "meta", text: rich
-      ? "Claims are locked: click one to see its evidence. An edit near a claim needs an admin's review before the report is published."
+      ? "Claims are locked: click one for what you can do with it, or select text to make a claim. An edit near a claim needs an admin's review before the report is published."
       : "This block has claims. Text inside [ ]{#cN} is what the validator checks, and an edit near a claim needs an admin's review before the report is published." }) : null,
     field,
+    rich ? h("div", { class: "claim-tools" }) : null,
+    h("div", { class: "claim-composer" }),
     h("div", { class: "edit-status", role: "status", "aria-live": "polite" }),
     h("div", { class: "edit-conflict" }),
     h("div", { class: "edit-leftover" }),
@@ -1519,12 +1550,431 @@ function blockEditor(block) {
     h("div", { class: "actions" },
       h("button", { class: "toggle primary edit-save", type: "button", text: suggest ? "Suggest edit" : "Save", disabled: true, onclick: () => saveBlock(block, ed) }),
       h("button", { class: "toggle", type: "button", text: "Cancel", onclick: () => {
-        if (ed.text !== ed.original && !confirm("Discard your changes to this block?")) return;
+        if (isDirty(ed) && !confirm("Discard your changes to this block?")) return;
         closeEditor(block);
       } }),
       h("span", { class: "meta", text: "Ctrl+Enter saves" })));
   queueMicrotask(() => paintEditor(block, ed));
   return el;
+}
+
+// -- claims in the editor (SPEC §6.2) ----------------------------------------------------------
+//
+// Select text to make it a claim, click a chip to edit, unlink, or delete its claim, and drag a chip
+// (or press Alt+Arrow on it) to move it. Each of these is part of one edit: the block's text plus
+// link_claim and unlink_claim ops, so a claim is never dropped between a removal and an addition.
+// The validator's reply, shown live, is the authority on whether a claim holds.
+
+const latestVersions = () => Object.fromEntries((state.report.evidence || []).map((e) => [e.id, e.latest_version]));
+const blockRoot = (block) => $("report").querySelector(`#blk-${CSS.escape(block.id)}`);
+const fieldOf = (block) => blockRoot(block)?.querySelector(".edit-field");
+const spanInner = (src) => src.slice(1, src.lastIndexOf("]{#"));
+const shorten = (text, n = 60) => (text.length > n ? `${text.slice(0, n)}…` : text);
+const toolButton = (text, onclick, cls = "") => h("button", { class: `quiet ${cls}`.trim(), type: "button", text, onclick });
+
+function buildOps(block, ed, { lenient = false } = {}) {
+  const present = new Set(findSpans(ed.text, ed.claimIds).map((s) => s.id));
+  const latest = latestVersions();
+  return [
+    upsertOp(block, ed.text),
+    ...[...ed.pending].filter(([id]) => present.has(id))
+      .map(([, def]) => ({ op: "link_claim", claim: claimForOps(def, block.id, latest, { lenient }) })),
+    ...[...ed.unlinked].map((id) => ({ op: "unlink_claim", id })),
+  ];
+}
+
+function edited(block, ed, field) {
+  ed.text = fieldText(field);
+  ed.restored = false;
+  ed.sel = null;
+  stash(block.id, ed);
+  paintEditor(block, ed);
+  schedulePreview(block, ed);
+}
+
+function unfinishedClaim(block, ed) {
+  if (ed.composer) return `Finish claim ${ed.composer.id} (Done) before saving.`;
+  const present = new Set(findSpans(ed.text, ed.claimIds).map((s) => s.id));
+  for (const [id, def] of ed.pending) {
+    if (present.has(id) && !def.numbers.every(isComplete)) return `Claim ${id} has a number that is not filled in yet.`;
+  }
+  return null;
+}
+
+// -- the bar under the text -----------------------------------------------------------------
+
+function paintClaimTools(block, ed) {
+  const bar = blockRoot(block)?.querySelector(".claim-tools");
+  const field = fieldOf(block);
+  if (!bar || !field) return;
+  if (ed.selected && !field.querySelector(`.claim-chip[data-claim="${ed.selected}"]`)) ed.selected = null;
+  for (const chip of field.querySelectorAll(".claim-chip")) {
+    chip.classList.toggle("selected", chip.dataset.claim === ed.selected);
+    chip.classList.toggle("pending", ed.pending.has(chip.dataset.claim));
+  }
+  const id = ed.selected;
+  if (id) {
+    const inReport = state.report.claims.some((c) => c.id === id);
+    fill(bar, h("span", { class: "meta", text: `Claim ${id}:` }),
+      inReport ? toolButton("Show evidence", () => openClaim(id)) : null,
+      toolButton("Edit claim", () => editClaim(block, ed, id)),
+      toolButton("Unlink, keep the text", () => unlinkClaim(block, ed, id, true)),
+      toolButton("Delete claim and text", () => unlinkClaim(block, ed, id, false)));
+  } else if (ed.sel) {
+    fill(bar, h("span", { class: "meta", text: `“${shorten(ed.sel.text)}”` }),
+      toolButton("Make this a claim", () => startClaim(block, ed), "primary-tool"));
+  } else {
+    fill(bar, h("span", { class: "meta", text: "Select text to make it a claim." }));
+  }
+}
+
+function selectClaim(block, ed, id) {
+  ed.selected = id;
+  paintClaimTools(block, ed);
+}
+
+function captureSelection(block, ed, field) {
+  const sel = getSelection();
+  ed.sel = null;
+  if (sel && sel.rangeCount && !sel.isCollapsed) {
+    const r = sel.getRangeAt(0);
+    const node = r.startContainer;
+    if (node === r.endContainer && node.nodeType === 3 && field.contains(node) && !node.parentElement.closest(".claim-chip")) {
+      const text = node.nodeValue.slice(r.startOffset, r.endOffset);
+      if (text.trim()) ed.sel = { node, start: r.startOffset, end: r.endOffset, text };
+    }
+  }
+  if (ed.sel) ed.selected = null;
+  paintClaimTools(block, ed);
+}
+
+// -- moving, unlinking, deleting ------------------------------------------------------------------
+
+function caretRangeAt(x, y) {
+  if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+  const pos = document.caretPositionFromPoint?.(x, y);
+  if (!pos) return null;
+  const range = document.createRange();
+  range.setStart(pos.offsetNode, pos.offset);
+  range.collapse(true);
+  return range;
+}
+
+function dropChip(block, ed, field, e) {
+  const chip = ed.drag;
+  ed.drag = null;
+  const range = caretRangeAt(e.clientX, e.clientY);
+  if (!chip || !range || !field.contains(range.startContainer)) return;
+  const at = range.startContainer;
+  if (chip.contains(at) || at.parentElement?.closest(".claim-chip") || at.nodeType === 1 && at.closest?.(".claim-chip")) return;
+  range.collapse(true);
+  range.insertNode(chip); // moves it: the claim id and its source go with it
+  field.normalize();
+  edited(block, ed, field);
+}
+
+function moveChip(block, ed, chip, direction) {
+  const prev = chip.previousSibling;
+  const next = chip.nextSibling;
+  const moved = moveOverWord(prev?.nodeType === 3 ? prev.nodeValue : "", next?.nodeType === 3 ? next.nodeValue : "", direction);
+  if (!moved) return;
+  if (prev?.nodeType === 3) prev.nodeValue = moved.before;
+  else if (moved.before) chip.before(document.createTextNode(moved.before));
+  if (next?.nodeType === 3) next.nodeValue = moved.after;
+  else if (moved.after) chip.after(document.createTextNode(moved.after));
+  chip.focus();
+  edited(block, ed, fieldOf(block));
+}
+
+function unlinkClaim(block, ed, id, keepText) {
+  const field = fieldOf(block);
+  const chip = field.querySelector(`.claim-chip[data-claim="${id}"]`);
+  if (chip) {
+    if (keepText) chip.replaceWith(document.createTextNode(spanInner(chip.dataset.src)));
+    else chip.remove();
+  }
+  field.normalize();
+  ed.pending.delete(id);
+  ed.claimIds.delete(id);
+  if (state.report.claims.some((c) => c.id === id)) ed.unlinked.add(id);
+  ed.selected = null;
+  if (ed.composer?.id === id) { ed.composer = null; drawComposer(block, ed); }
+  edited(block, ed, field);
+}
+
+// -- making and editing a claim ---------------------------------------------------------------
+
+function startClaim(block, ed) {
+  const { node, start, end } = ed.sel;
+  const raw = node.nodeValue.slice(start, end);
+  const from = start + (raw.length - raw.trimStart().length);
+  const to = end - (raw.length - raw.trimEnd().length);
+  const selected = node.nodeValue.slice(from, to);
+  if (/[[\]\n]/.test(selected)) {
+    ed.error = "Select plain text within one line: a claim cannot hold brackets or a line break.";
+    paintEditor(block, ed);
+    return;
+  }
+  const id = nextClaimId([...state.report.claims.map((c) => c.id), ...ed.pending.keys()]);
+  ed.pending.set(id, { id, numbers: detectNumbers(selected).map((text) => ({ text, tier: "direct" })), extraEvidence: [] });
+  ed.claimIds.add(id);
+  ed.error = null;
+  const middle = node.splitText(from);
+  middle.splitText(to - from);
+  middle.replaceWith(chipEl({ id, source: `[${selected}]{#${id}}`, inner: selected }, ed));
+  ed.sel = null;
+  ed.selected = id;
+  const field = fieldOf(block);
+  ed.text = fieldText(field);
+  openComposer(block, ed, id, { isNew: true });
+}
+
+const editableClaim = (claim) => ({
+  id: claim.id, derivation: claim.derivation, extraEvidence: [],
+  numbers: claim.numbers.map((n) => ({ text: n.text, tier: n.tier, cell: n.cell && { ...n.cell, key: [...n.cell.key] },
+    expression: n.expression, derivation: n.derivation })),
+});
+
+function editClaim(block, ed, id) {
+  const snapshot = ed.pending.has(id) ? structuredClone(ed.pending.get(id)) : null;
+  if (!snapshot) {
+    const claim = state.report.claims.find((c) => c.id === id);
+    if (!claim) return;
+    ed.pending.set(id, editableClaim(claim));
+  }
+  openComposer(block, ed, id, { isNew: false, snapshot });
+}
+
+function openComposer(block, ed, id, opts = {}) {
+  const chip = fieldOf(block).querySelector(`.claim-chip[data-claim="${id}"]`);
+  ed.restored = false;
+  ed.composer = { id, isNew: Boolean(opts.isNew), snapshot: opts.snapshot ?? null, text: chip ? spanInner(chip.dataset.src) : "" };
+  drawComposer(block, ed);
+  stash(block.id, ed);
+  paintEditor(block, ed);
+  schedulePreview(block, ed, 0);
+}
+
+function finishComposer(block, ed, keep) {
+  const cmp = ed.composer;
+  ed.composer = null;
+  if (!keep) {
+    if (cmp.isNew) {
+      unlinkClaim(block, ed, cmp.id, true); // the text goes back to plain text
+    } else {
+      if (cmp.snapshot) ed.pending.set(cmp.id, cmp.snapshot);
+      else ed.pending.delete(cmp.id);
+    }
+  }
+  drawComposer(block, ed);
+  stash(block.id, isDirty(ed) ? ed : null);
+  paintEditor(block, ed);
+  schedulePreview(block, ed, 0);
+}
+
+const TIERS = [["direct", "A cell's value"], ["computed", "Computed from cells"], ["asserted", "Asserted, no data"]];
+
+function drawComposer(block, ed) {
+  const box = blockRoot(block)?.querySelector(".claim-composer");
+  if (!box) return;
+  const cmp = ed.composer;
+  if (!cmp) { fill(box); return; }
+  const def = ed.pending.get(cmp.id);
+  const pinsLine = h("p", { class: "meta" });
+  const paintPins = () => {
+    const pins = derivePins(def.numbers, latestVersions(), def.extraEvidence);
+    pinsLine.textContent = pins.length ? `Pins: ${pins.map((p) => `${p.id} v${p.version}`).join(", ")}` : "Pins: no evidence yet";
+  };
+  const changed = () => { ed.restored = false; paintPins(); stash(block.id, ed); paintEditor(block, ed); schedulePreview(block, ed); };
+  const redraw = () => { drawComposer(block, ed); changed(); };
+
+  const rows = def.numbers.map((n, i) => {
+    const body = n.tier === "direct"
+      ? directBody(n, changed)
+      : n.tier === "computed" ? computedBody(n, changed)
+        : h("label", { class: "field" }, "Where it comes from",
+          h("input", { type: "text", value: n.derivation || "", placeholder: "e.g. told by finance on a call",
+            oninput: (e) => { n.derivation = e.target.value; changed(); } }));
+    return h("div", { class: "cmp-number" },
+      h("div", { class: "row" },
+        h("label", { class: "field" }, "Number as written",
+          h("input", { type: "text", value: n.text, oninput: (e) => { n.text = e.target.value; changed(); } })),
+        h("label", { class: "field" }, "Supported by",
+          h("select", { onchange: (e) => { n.tier = e.target.value; redraw(); } },
+            TIERS.map(([v, t]) => h("option", { value: v, text: t, selected: n.tier === v })))),
+        toolButton("Remove", () => { def.numbers.splice(i, 1); redraw(); })),
+      body,
+      h("p", { class: "cmp-result", "data-i": String(i) }));
+  });
+
+  const addInput = h("input", { type: "text", placeholder: "e.g. 12%", "aria-label": "Another number in the text" });
+  const evidenceIds = (state.report.evidence || []).map((e) => e.id);
+  const extraSel = h("select", { "aria-label": "Evidence to cite" }, evidenceIds.map((id) => h("option", { value: id, text: id })));
+  const extraList = h("span", { class: "chips" });
+  const paintExtras = () => fill(extraList, def.extraEvidence.map((p, i) => h("span", { class: "chip" }, `${p.id} v${p.version} `,
+    h("button", { class: "chip-x", type: "button", "aria-label": `Stop citing ${p.id}`, text: "×",
+      onclick: () => { def.extraEvidence.splice(i, 1); paintExtras(); changed(); } }))));
+
+  fill(box, h("div", { class: "notice composer" },
+    h("h4", { text: `Claim ${cmp.id}` }),
+    h("p", { class: "meta", text: `“${cmp.text}”. Every number in it needs a source; years and dates do not.` }),
+    rows,
+    h("div", { class: "row" },
+      h("label", { class: "field" }, "Another number", addInput),
+      toolButton("Add", () => { if (addInput.value.trim()) { def.numbers.push({ text: addInput.value.trim(), tier: "direct" }); redraw(); } }),
+      toolButton("Find numbers in the text", () => {
+        for (const text of detectNumbers(cmp.text)) if (!def.numbers.some((n) => n.text === text)) def.numbers.push({ text, tier: "direct" });
+        redraw();
+      })),
+    h("div", { class: "row" },
+      h("label", { class: "field" }, "Also cite evidence (for a claim with no number)", extraSel),
+      toolButton("Cite it", () => {
+        if (extraSel.value && !def.extraEvidence.some((p) => p.id === extraSel.value)) {
+          def.extraEvidence.push({ id: extraSel.value, version: latestVersions()[extraSel.value] || 1 });
+          paintExtras(); changed();
+        }
+      }), extraList),
+    pinsLine,
+    h("div", { class: "cmp-findings" }),
+    h("div", { class: "actions" },
+      h("button", { class: "toggle primary", type: "button", text: "Done", onclick: () => finishComposer(block, ed, true) }),
+      h("button", { class: "toggle", type: "button", text: cmp.isNew ? "Cancel, not a claim" : "Cancel",
+        onclick: () => finishComposer(block, ed, false) }))));
+  paintExtras();
+  paintPins();
+  updateComposerResults(ed);
+}
+
+function updateComposerResults(ed) {
+  const cmp = ed.composer;
+  if (!cmp) return;
+  const box = blockRoot(ed.block)?.querySelector(".claim-composer");
+  if (!box) return;
+  // The check ran on the numbers that were filled in, in order, so line them up with the form's rows.
+  // A claim the edit left unchanged is not in the check, and shows what the report already says of it.
+  const def = ed.pending.get(cmp.id);
+  const checked = ed.check?.[cmp.id];
+  const stored = checked ? null : state.report.claims.find((c) => c.id === cmp.id);
+  const filled = def.numbers.map((n, i) => (isComplete(n) ? i : -1)).filter((i) => i >= 0);
+  for (const el of box.querySelectorAll(".cmp-result")) {
+    const i = Number(el.dataset.i);
+    const n = checked ? checked.numbers?.[filled.indexOf(i)] : stored?.numbers?.[i];
+    if (!isComplete(def.numbers[i])) { fill(el, h("span", { class: "meta", text: "Not filled in yet." })); continue; }
+    fill(el, n ? [
+      h("span", { class: `chip ${n.status}`, text: STATUS_LABEL[n.status] || n.status }),
+      n.tier === "computed" && n.value != null ? ` computed ${shortValue(n.value)}` : null,
+      n.message ? ` ${n.message}` : null]
+      : h("span", { class: "meta", text: ed.error ? "" : "Checking…" }));
+  }
+  fill(box.querySelector(".cmp-findings"),
+    (ed.findings || []).filter((f) => f.claim === cmp.id && f.severity !== "info").slice(0, 6).map((f) =>
+      h("p", { class: "finding" }, h("span", { class: `chip ${f.severity}`, text: f.severity }), " ", f.message)));
+}
+
+function computedBody(n, changed) {
+  const input = h("input", { type: "text", value: n.expression || "", spellcheck: "false",
+    placeholder: "pct_change(cell(q-rev, 2024, revenue), cell(q-rev, 2025, revenue))",
+    oninput: (e) => { n.expression = e.target.value; changed(); } });
+  const picker = cellPicker({ insert: true, onPick: (text) => {
+    const at = input.selectionStart ?? input.value.length;
+    input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
+    input.focus();
+    input.setSelectionRange(at + text.length, at + text.length);
+    n.expression = input.value;
+    changed();
+  } });
+  return h("div", {}, h("label", { class: "field" }, "Expression", input),
+    h("details", {}, h("summary", { text: "Insert a cell" }), picker));
+}
+
+function directBody(n, changed) {
+  const summary = h("p", { class: "meta" });
+  const paint = () => {
+    summary.textContent = n.cell ? `Cell: ${n.cell.evidence} v${n.cell.version} · ${n.cell.key.join(" · ")} · ${n.cell.column}`
+      : "Pick the row and column that hold this number.";
+  };
+  paint();
+  return h("div", {}, summary, cellPicker({ cell: n.cell, onPick: (cell) => { n.cell = cell; paint(); changed(); } }));
+}
+
+// Pick a cell from evidence in the report: evidence and version, then a row by its key, then a column.
+function cellPicker({ cell, onPick, insert = false }) {
+  const evidenceList = state.report.evidence || [];
+  if (!evidenceList.length) return h("p", { class: "meta", text: "This report has no evidence yet; an agent adds it." });
+  const message = h("p", { class: "meta" });
+  const evSel = h("select", { "aria-label": "Evidence" }, evidenceList.map((e) => h("option", { value: e.id, text: e.id })));
+  const verSel = h("select", { "aria-label": "Version" });
+  const filter = h("input", { type: "search", placeholder: "Find a row", "aria-label": "Find a row" });
+  const rowSel = h("select", { size: "6", "aria-label": "Row" });
+  const colSel = h("select", { "aria-label": "Column" });
+  const shown = h("p", { class: "meta" });
+  let doc = null;
+  let keys = [];
+
+  const versions = (keep) => {
+    const latest = latestVersions()[evSel.value] || 1;
+    verSel.replaceChildren(...Array.from({ length: latest }, (_, i) => h("option", { value: String(i + 1), text: `v${i + 1}` })));
+    verSel.value = String(keep && keep <= latest ? keep : latest);
+  };
+  const names = () => doc.columns.map((c) => c.name);
+  const drawRows = () => {
+    const q = filter.value.trim().toLowerCase();
+    const options = [];
+    keys.forEach((k, i) => {
+      const label = k.join(" · ");
+      if (!q || label.toLowerCase().includes(q)) options.push(h("option", { value: String(i), text: label }));
+    });
+    rowSel.replaceChildren(...options.slice(0, 200));
+    message.textContent = options.length > 200 ? `Showing 200 of ${options.length} rows; type to narrow them.` : "";
+  };
+  const pick = () => {
+    if (!doc || rowSel.value === "" || !colSel.value) return;
+    const r = Number(rowSel.value);
+    const key = doc.key.map((k) => doc.rows[r][names().indexOf(k)]);
+    const keyTypes = doc.key.map((k) => doc.columns.find((c) => c.name === k).type);
+    const column = colSel.value;
+    shown.textContent = `Value: ${doc.rows[r][names().indexOf(column)]}`;
+    if (!insert) onPick({ evidence: evSel.value, version: Number(verSel.value), key, column });
+    return { key, keyTypes, column };
+  };
+  const load = async (preselect) => {
+    message.textContent = "Loading…";
+    try {
+      const res = await evidence(evSel.value, Number(verSel.value));
+      doc = res.evidence;
+      keys = res.row_keys || [];
+      if (!doc.rows) { message.textContent = "The rows of this evidence are not available."; return; }
+      const keyNames = new Set(doc.key);
+      colSel.replaceChildren(...doc.columns.filter((c) => !keyNames.has(c.name)).map((c) => h("option", { value: c.name, text: c.name })));
+      drawRows();
+      if (preselect) {
+        const want = JSON.stringify(preselect.key);
+        const r = doc.rows.findIndex((row) => JSON.stringify(doc.key.map((k) => row[names().indexOf(k)])) === want);
+        if (r >= 0) rowSel.value = String(r);
+        colSel.value = preselect.column;
+        pick();
+      }
+    } catch (err) {
+      message.textContent = err.message;
+    }
+  };
+  evSel.addEventListener("change", () => { versions(); load(); });
+  verSel.addEventListener("change", () => load());
+  filter.addEventListener("input", drawRows);
+  rowSel.addEventListener("change", pick);
+  colSel.addEventListener("change", pick);
+  if (cell) { evSel.value = cell.evidence; versions(cell.version); } else versions();
+  load(cell);
+  return h("div", { class: "cell-picker" },
+    h("div", { class: "row" },
+      h("label", { class: "field" }, "Evidence", evSel), h("label", { class: "field" }, "Version", verSel),
+      h("label", { class: "field" }, "Column", colSel)),
+    h("label", { class: "field" }, "Row", filter, rowSel),
+    shown, message,
+    insert ? toolButton("Insert this cell", () => {
+      const p = pick();
+      if (p) onPick(cellExpression(evSel.value, p.key, p.keyTypes, p.column));
+    }, "primary-tool") : null);
 }
 
 // -- sharing (admin) ------------------------------------------------------------------------

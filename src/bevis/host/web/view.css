@@ -427,3 +427,24 @@ textarea.edit-field { resize: vertical; }
 .chip-button:hover { filter: brightness(0.95); }
 .review-claims { list-style: none; margin: 0; padding: 0; font-size: 14px; }
 .review-claims li { padding: 4px 0; }
+
+/* claims in the editor (SPEC §6.2) */
+
+.claim-tools { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-height: 30px; margin-top: 6px; }
+.claim-tools .meta { margin: 0; }
+.claim-tools .primary-tool, .cell-picker .primary-tool { color: var(--accent); border-color: var(--accent); }
+.claim-chip.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.claim-chip.pending { border-style: dashed; }
+.claim-chip[draggable="true"] { cursor: grab; }
+.composer { margin: 10px 0; }
+.composer h4 { margin: 0 0 4px; font: 600 15px/1.3 var(--sans); }
+.composer .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.cmp-number { margin: 10px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.cmp-result { margin: 4px 0 0; font-size: 13px; }
+.cmp-findings .finding { margin: 4px 0; }
+.cell-picker { margin: 6px 0; }
+.cell-picker select, .composer select, .composer input[type="text"], .cell-picker input[type="search"] {
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font: 14px var(--sans);
+}
+.cell-picker select[size] { width: 100%; }
+.chip-x { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 2px; font: inherit; }

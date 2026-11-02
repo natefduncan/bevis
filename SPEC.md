@@ -556,6 +556,8 @@ submit rows (§9); only agents and clients do.
   `upsert_block` that removes the span from one place and adds it in
   another, in one atomic edit, so the claim is never dropped between
   the two. The validator re-checks the new sentence.
+  In the web view a chip moves within its block, by dragging it or by
+  Alt+Arrow on it; moving a claim to another block is an API edit.
 - **Unlink:** `unlink_claim`. The text stays; any number in it is
   treated as unsupported by the validator.
 - **Delete:** `delete_block` semantics for the span: the claim and its
@@ -659,6 +661,8 @@ each block it touched. `get_report` returns `block_state`.
 
 - Whether `clear_review` should also be offered to editors who did not
   make the edit. Today it is admin only.
+- Moving a claim to another block in the web view (two blocks and the
+  claim's `block_id` in one edit).
 - Paragraph granularity is coarser than a sentence: a long paragraph
   with one claim flags on any edit to it. Splitting sentences would need
   a splitter the validator does not have.
